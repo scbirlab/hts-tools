@@ -230,7 +230,7 @@ hts parse plate-?.xlsx --data-shape row \
 Here, `--grouping` identifies the columns which indicate values coming from the same plate. One file is produced per
 measured and normalized (`calc_*_norm`) column.
 
-<img src="docs/source/_static/hm_calc_fluor_ch1_norm_heatmap.png" alt="" width="400">
+<img src="docs/source/_static/hm_calc_fluor_ch1_norm_heatmap.png" alt="" width="600">
 
 - `hts plot-rep`
 
