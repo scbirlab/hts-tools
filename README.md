@@ -129,7 +129,7 @@ and calculated columns (`hts plot-dr` plots them all automatically in seaparte f
 
 The example above, `hts plot-dose -x concentration --facets guide_name --color compound_name`, will produce plots like this:
 
-<img src="docs/source/_static/plt-test_calc_abs_ch1_norm_.png" alt="" width="400">
+<img src="docs/source/_static/plt-test_calc_abs_ch1_norm_.png" alt="" width="600">
 
 The panels each value with the same `guide_name` is in a `facet` (panel), and the lines are colored by `compound_name`.
 
@@ -195,8 +195,8 @@ This command also calculates other summary statistics such as between-replicate 
 prefix is provided to the `--plot` option, then volcano and flashlight plots are produced, which may be useful for identifying 
 hits of high throughput screens.
 
-<img src="docs/source/_static/summary-counter_fluor_ch1_norm_volcano.png" alt="" width="400">
-<img src="docs/source/_static/summary-counter_fluor_ch1_norm_flashlight.png" alt="" width="400">
+<img src="docs/source/_static/summary-counter_fluor_ch1_norm_volcano.png" alt="" width="600">
+<img src="docs/source/_static/summary-counter_fluor_ch1_norm_flashlight.png" alt="" width="600">
 
 ## Other commands
 
@@ -214,8 +214,8 @@ hts parse plate-?.xlsx --data-shape row  \
   > qc.tsv
 ```
 
-<img src="docs/source/_static/qc-plot_fluor_ch1_mean_sd.png" alt="" width="400">
-<img src="docs/source/_static/qc-plot_fluor_ch1_zprime.png" alt="" width="400">
+<img src="docs/source/_static/qc-plot_fluor_ch1_mean_sd.png" alt="" width="600">
+<img src="docs/source/_static/qc-plot_fluor_ch1_zprime.png" alt="" width="600">
 
 - `hts plot-hm`
 
@@ -245,7 +245,7 @@ hts parse plate-?.xlsx --data-shape row  \
 Here, `--grouping` identifies the unique conditions within which values are treated as replicates. The positives and negatives
 are plotted as different colors. One file is produced per measured and normalized (`calc_*_norm`) column.
 
-<img src="docs/source/_static/rep_measured_fluor_ch1_replicates.png" alt="" width="400">
+<img src="docs/source/_static/rep_measured_fluor_ch1_replicates.png" alt="" width="600">
 
 In the plots, the left column is on a linear-linear scale and the right column is on a log-log scale. There is one row
 of plots per wavelength set in the dataset.
@@ -262,7 +262,7 @@ hts parse plate-?.xlsx --data-shape row \
 
 The positives and negatives are plotted as different colors. One file is produced per measured and normalized (`calc_*_norm`) column.
 
-<img src="docs/source/_static/hist_measured_fluor_ch1_histogram.png" alt="" width="400">
+<img src="docs/source/_static/hist_measured_fluor_ch1_histogram.png" alt="" width="600">
 
 In the plots, the left two columns are on a linear-linear scale and the right two columns are on a log-log scale. There is one row
 of plots per wavelength set in the dataset.
