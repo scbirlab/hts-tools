@@ -1,0 +1,13 @@
+﻿experiment_id,sample_id,data_filename,compound_source_filename,compound_source_plate_id,replicate,strain_name,timepoint
+expt01,plate-7_rep-1,170423_plate 7 rep 1.txt,compounds.xlsx,Plate 7,1,WT,14
+expt01,plate-7_rep-2,170423_plate 7 rep 2.txt,compounds.xlsx,Plate 7,2,WT,14
+expt01,plate-7_rep-3,170423_plate 7 rep 3.txt,compounds.xlsx,Plate 7,1,mutant,14
+expt01,plate-7_rep-4,170423_plate 7 rep 4.txt,compounds.xlsx,Plate 7,2,mutant,14
+expt01,plate-8_rep-1,170423_plate 8 rep 1.txt,compounds.xlsx,Plate 8,1,WT,14
+expt01,plate-8_rep-2,170423_plate 8 rep 2.txt,compounds.xlsx,Plate 8,2,WT,14
+expt01,plate-8_rep-3,170423_plate 8 rep 3.txt,compounds.xlsx,Plate 8,1,mutant,14
+expt01,plate-8_rep-4,170423_plate 8 rep 4.txt,compounds.xlsx,Plate 8,2,mutant,14
+expt01,plate-9_rep-1,170423_plate 9 rep 1.txt,compounds.xlsx,Plate 9,1,WT,14
+expt01,plate-9_rep-2,170423_plate 9 rep 2.txt,compounds.xlsx,Plate 9,2,WT,14
+expt01,plate-9_rep-3,170423_plate 9 rep 3.txt,compounds.xlsx,Plate 9,1,mutant,14
+expt01,plate-9_rep-4,170423_plate 9 rep 4.txt,compounds.xlsx,Plate 9,2,mutant,14

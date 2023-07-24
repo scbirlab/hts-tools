@@ -1,0 +1,54 @@
+[project]
+name = "hts-tools"
+version = "0.0.1"
+authors = [
+  { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
+]
+description = "Parsing and analysing platereader absorbance and fluorescence data."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+keywords = ["science", "assay", "platereader", "analysis"]
+
+classifiers = [  
+  
+  "Development Status :: 3 - Alpha",
+
+  # Indicate who your project is intended for
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+
+  "License :: OSI Approved :: MIT License",
+
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+dependencies = [ 
+  "matplotlib", 
+  "numpy",
+  "openpyxl==3.1.0", 
+  "pandas",
+  "scipy"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/scbirlab/"
+"Bug Tracker" = "https://github.com/scbirlab/hts-tools/issues"
+
+[project.scripts]  # Optional
+hts = "htstools.cli:main"
+
+[tool.setuptools]
+# If there are data files included in your packages that need to be
+# installed, specify them here.
+# package-data = {"montebarcode" = ["*.yml"]}
+
+[build-system]
+# These are the assumed default build requirements from pip:
+# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
+requires = ["setuptools>=43.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
