@@ -154,7 +154,7 @@ Values can be normalized to values between 0 and 1 relative to their positive (0
 5       p        0.8              600nm                0.15                0.85        0.071429
 ```
 
-The scaling can be everesed with `flip=True`.
+The scaling can be reversed with `flip=True`.
 
 ```python
 >>> normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1', flip=True) 

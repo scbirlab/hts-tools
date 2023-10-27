@@ -1,5 +1,15 @@
 # Usage
 
+- [First pipeline example](#first-pipeline-example)
+    - [Parsing platereader exports](#parsing-platereader-exports)
+    - [Adding experimental conditions](#adding-experimental-conditions)
+    - [Normalization within batches](#normalization-within-batches)
+    - [Plotting dose responses](#plotting-dose-response)
+- [Second pipeline example](#second-pipeline-example)
+    - [Converting plate-shaped data to columns](#converting-plate-shaped-data-to-columns)
+    - [Statistcal testing](#statistical-testing)
+- [Other commands](#other-commands)
+
 **hts-tools**  provides command-line utlities to analyse and plot data
 from platereaders, starting with the _raw_ exported data with no 
 manual conversion or copy-pasting needed. The tools complete specific tasks which 

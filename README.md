@@ -6,6 +6,20 @@
 
 Parsing and analysing platereader absorbance and fluorescence data.
 
+- [Installation](#installation)
+- [Command-line usage](#command-line-usage)
+    - [First pipeline example](#first-pipeline-example)
+        - [Parsing platereader exports](#parsing-platereader-exports)
+        - [Adding experimental conditions](#adding-experimental-conditions)
+        - [Normalization within batches](#normalization-within-batches)
+        - [Plotting dose responses](#plotting-dose-response)
+    - [Second pipeline example](#second-pipeline-example)
+        - [Converting plate-shaped data to columns](#converting-plate-shaped-data-to-columns)
+        - [Statistcal testing](#statistical-testing)
+    - [Other commands](#other-commands)
+- [Python API](#python-api)
+- [Documentation](#documentation)
+
 ## Installation
 
 ### The easy way
@@ -422,7 +436,7 @@ Values can be normalized to values between 0 and 1 relative to their positive (0
 5       p        0.8              600nm                0.15                0.85        0.071429
 ```
 
-The scaling can be everesed with `flip=True`.
+The scaling can be reveresed with `flip=True`.
 
 ```python
 >>> normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1', flip=True) 
