@@ -508,9 +508,9 @@ def plot_scatter(data: pd.DataFrame,
     fig, ax = plt.subplots(figsize=(panel_size, 
                                     panel_size))
 
-    x_col, y_col, c_col = (('calc_' + measurement_col + s) 
-                           if s is not None else s
-                           for s in (x, y, color))
+    x_col, y_col, c_col = (('calc_' + measurement_col + dimension) 
+                           if dimension is not None else dimension
+                           for dimension in (x, y, color))
     
     if log_color and c_col is not None:
         data[c_col] = np.log10(data[c_col])

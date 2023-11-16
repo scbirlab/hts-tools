@@ -5,6 +5,7 @@ from collections.abc import Callable
 import argparse
 from functools import partial, reduce
 import os
+from re import compile, search
 import sys
 
 ## too slow to load just for type hints
@@ -75,12 +76,14 @@ def _subset_cols(data, #: DataFrame, ## too slow to load just for type hints
                  ends: str = '',
                  logic: str = 'OR') -> List[str]:
     
+    starts, ends = compile('^' + starts), compile(ends + '$')
+    
     if logic.upper() == 'OR':
         return [c for c in data.columns 
-                if c.endswith(ends) or c.startswith(starts)]
+                if search(ends, c) or search(starts, c)]
     elif logic.upper() == 'AND':
         return [c for c in data.columns 
-                if c.endswith(ends) and c.startswith(starts)]
+                if search(ends, c) and search(starts, c)]
     else:
         raise NotImplementedError(f"{logic=} not implemented")
 
@@ -178,11 +181,10 @@ def _normalize(args: argparse.Namespace) -> None:
 
     for measurement_col in measurement_cols:
 
-        # print(measurement_col)
-
         data = normalize(data, 
                          measurement_col=measurement_col,
                          control_col=args.control,
+                         method=args.method,
                          pos=args.positive,
                          neg=args.negative, 
                          group=args.grouping)
@@ -322,7 +324,7 @@ def _summarize(args: argparse.Namespace) -> None:
     data = _load_table(args.input, args.format)
     measurement_cols = _subset_cols(data, 
                                     starts=args.measurement_prefix,
-                                    ends='norm')
+                                    ends='norm\..{3}')
     
     summaries = []
 
@@ -351,8 +353,13 @@ def _summarize(args: argparse.Namespace) -> None:
         measurements = _subset_cols(summaries, 
                                     ends='_wavelength',
                                     logic='AND')
-        col_groups = tuple(set(['_'.join(c.split('_')[:-1]) for c in measurements]) |
-                       set(['_'.join(c.split('_')[:-1]) + '_norm' for c in measurements]))
+        channels = set(['_'.join(col.split('_')[:-1]) 
+                        for col in measurements])
+        normalized = set(['_'.join(col.split('_')[:-1]) 
+                          for col in summaries 
+                          if col.__contains__('_norm.') and 
+                          any(col.__contains__(channel) for channel in channels)])
+        col_groups = tuple(channels | normalized)
 
         for c in col_groups:
 
@@ -362,7 +369,7 @@ def _summarize(args: argparse.Namespace) -> None:
                                   measurement_col=c_str,
                                   x='_log10fc',
                                   y='_ssmd',
-                                  color='_t_p',
+                                  color='_t.p',
                                   log_color=True,
                                   vlines=[0.],
                                   hlines=[0.],
@@ -373,7 +380,7 @@ def _summarize(args: argparse.Namespace) -> None:
             fig, _ = plot_scatter(summaries,
                                   measurement_col=c_str,
                                   x='_log10fc',
-                                  y='_t_p',
+                                  y='_t.p',
                                   vlines=[0.],
                                   yscale='log',
                                   panel_size=2.5)
@@ -395,7 +402,7 @@ def _plot_columns(args: argparse.Namespace,
 
     all_cols_to_plot = _subset_cols(data, 
                                     starts=args.measurement_prefix,
-                                    ends='_norm')
+                                    ends='_norm\..{3}')
 
     filenames = []
 
@@ -425,7 +432,7 @@ def _plot_dose(args: argparse.Namespace) -> None:
 
     all_cols_to_plot = _subset_cols(data, 
                                     starts=args.measurement_prefix,
-                                    ends='_norm')
+                                    ends='_norm\..{3}')
 
     filenames = []
 
@@ -441,7 +448,7 @@ def _plot_dose(args: argparse.Namespace) -> None:
                                              color_control=args.control,
                                              facet=args.facet, 
                                              files=args.files,
-                                             hlines=[0., 1.] if column.endswith('_norm') else [0.],
+                                             hlines=[0., 1.] if column.__contains__('_norm.') else [0.],
                                              format=args.plot_format)
         
         filenames += these_filenames
@@ -562,6 +569,12 @@ def main() -> None:
                        default='Biotek',
                        choices=['Biotek'],
                        help='Platereader vendor. Default: %(default)s')
+    
+    normalize.add_argument('--method', '-t', 
+                           type=str,
+                           default='PON',
+                           choices=['PON', 'NPG', 'pon', 'npg'],
+                           help='Normalization method. Default: %(default)s')
     
     join.add_argument('--right', '-r', 
                       type=argparse.FileType('r'),
