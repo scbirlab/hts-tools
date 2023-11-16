@@ -1,6 +1,6 @@
 [project]
 name = "hts-tools"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/scbirlab/"
+"Homepage" = "https://github.com/scbirlab/hts-tools"
 "Bug Tracker" = "https://github.com/scbirlab/hts-tools/issues"
 
 [project.scripts]  # Optional
@@ -45,7 +45,7 @@ hts = "htstools.cli:main"
 [tool.setuptools]
 # If there are data files included in your packages that need to be
 # installed, specify them here.
-# package-data = {"montebarcode" = ["*.yml"]}
+# package-data = {"" = ["*.yml"]}
 
 [build-system]
 # These are the assumed default build requirements from pip:
