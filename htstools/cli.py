@@ -254,7 +254,7 @@ def _qc(args: argparse.Namespace) -> None:
     data = _load_table(args.input, args.format)
     measurement_cols = _subset_cols(data, 
                                     starts=args.measurement_prefix,
-                                    ends='norm')
+                                    ends='norm\..{3}')
 
     z_data = []
 
