@@ -90,19 +90,37 @@ long as the column headings aren't repeated.
 
 ### Normalization within batches 
 
-The `hts normalize` command normalizes raw measured data to be between $0$ and $1$ based on posiitve and negative controls, optionally within groups 
-(or batches) of measurements. In the example above, the positive and negative controls are defined as `RIF` and `DMSO`, and 
-should be found in the column `compound_name` (which may have been added by `hts join`).
+The `hts normalize` command normalizes raw measured data based on controls. This can add power to 
+downstream statsical analyses by mitigating batch-to-batch variation. 
 
-The positive and negative controls are averaged within each value in the `--grouping` column. In the example above, they will 
-be averaged for each `plate_id`, and these will be used to normalize the measured values of that `plate_id` according to:
+`hts normalize` adds new columns for each measured column. These columns start with `calc_` and end with `_norm.{method}`, for example `calc_abs_ch1_norm.npg` and `calc_abs_ch2_norm.npg`. Two methods are offered which 
+optionally normalize within within groups, such as batches or plates.
+
+#### Normalized proportion of growth (NPG)
+    
+This method scales raw data to be between $0$ and $1$ based on positive _and_ negative 
+controls, optionally within groups (or batches) of measurements. In the example above, 
+the positive and negative controls are defined as `RIF` and `DMSO`, and should be found in the column `compound_name` (which may have been added by `hts join`).
+
+The positive and negative controls are averaged within each value in the `--grouping` column. In 
+the example above, they will be averaged for each `plate_id`, and these will be used to normalize 
+the measured values of that `plate_id` according to:
 
 $$s = \frac{m - \mu_p}{\mu_n - \mu_p}$$
 
-where $s$ is the normalized value, $m$ is the measured value, and $\mu_p$ and $\mu_n$ are the average positive and negative controls. 
+where $s$ is the normalized value, $m$ is the measured value, and $\mu_p$ and $\mu_n$ are the mean positive and negative controls. 
 
-`hts normalize` adds new columns for each measured column. These columns start with `calc_` and end with `_norm`, for example `calc_abs_ch1_norm`
-and `calc_abs_ch2_norm`.
+#### Proportion of negative (PON) [default]
+
+This method scales raw data relative negative controls _only_, optionally within groups (or batches) of measurements. 
+
+The negative controls are averaged within each value in the `--grouping` column. In 
+the example above, they would be averaged for each `plate_id`, and these will be used to normalize 
+the measured values of that `plate_id` according to:
+
+$$s = \frac{m}{\mu_n}$$
+
+where $s$ is the normalized value, $m$ is the measured value, and $\mu_n$ is the mean negative control. 
 
 ### Plotting dose response
 
