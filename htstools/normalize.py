@@ -9,32 +9,163 @@ def _unique_entries_str(x: pd.DataFrame) -> str:
     return ','.join(sorted(map(str, x.unique())))
 
 
+def _check_controls(data: pd.DataFrame, 
+                    measurement_col: str,
+                    control_col: str,
+                    value: str) -> None:
+        
+    if value not in data[control_col].values:
+
+        try:
+
+            raise ValueError(f"{value=} is not in data:\n\t" +
+                            _unique_entries_str(data[control_col]))
+        
+        except TypeError:
+
+            raise TypeError(f"{control_col=} is not a str column.")
+
+    return None
+
+
+def _get_grouped_control_means(data: pd.DataFrame, 
+                               measurement_col: str,
+                               control_col: str,
+                               neg: str,
+                               pos: Union[str, None] = None,
+                               group: Union[str, List[str], None] = None) -> pd.DataFrame:
+
+    if group is None:
+
+        group = '__unigroup__'
+        data[group] = group
+
+    if measurement_col not in data:
+        raise KeyError(f"{measurement_col=} is "
+                       f"not in data:\n\t{','.join(data.columns.tolist())}")
+    
+    control_values = {control: value 
+                      for control, value in zip(('neg_mean', 'pos_mean'), (neg, pos))
+                      if value is not None}
+    mean_control_column_names = {control: measurement_col + s + '_mean' 
+                                 for control, s in zip(control_values, ('_neg', '_pos'))}
+
+    _check_controls(data=data,
+                    measurement_col=measurement_col,
+                    control_col=control_col,
+                    value=neg)
+    
+    if pos is not None:
+
+        _check_controls(data=data,
+                    measurement_col=measurement_col,
+                    control_col=control_col,
+                    value=pos)
+
+    for control, value in control_values.items():
+        
+        name = mean_control_column_names[control]
+
+        control = (data.query(f'{control_col} == "{value}"')
+                       .groupby(group)[[measurement_col]]
+                       .mean()
+                       .reset_index(names=group)
+                       .rename(columns={measurement_col: name}))
+
+        data = pd.merge(data, control, how='outer')
+
+    if group == '__unigroup__':
+
+        data = data.drop(columns=group)
+
+    return mean_control_column_names, data
+
+
+def _normalize_pon(data: pd.DataFrame, 
+                   measurement_col: str,
+                   neg_mean: str,
+                   pos_mean: Union[str, None] = None,
+                   flip: bool = False) -> pd.DataFrame:
+
+    norm_colname = measurement_col + '_norm.pon'
+    
+    if flip:
+        data[norm_colname] = 1. - (data[measurement_col] / data[neg_mean])
+    else:
+        data[norm_colname] = data[measurement_col] / data[neg_mean]
+
+    return data
+
+
+def _normalize_npg(data: pd.DataFrame, 
+                   measurement_col: str,
+                   neg_mean: str,
+                   pos_mean: str,
+                   flip: bool = False) -> pd.DataFrame:
+
+    norm_colname = measurement_col + '_norm.npg'
+    
+    if flip:
+        data[norm_colname] = ((data[measurement_col] - data[neg_mean]) / 
+                              (data[pos_mean] - data[neg_mean]))
+    else:
+        data[norm_colname] = ((data[measurement_col] - data[pos_mean]) / 
+                              (data[neg_mean] - data[pos_mean]))
+
+    return data
+
+
+_NORMALIZATION_METHODS = {'npg': _normalize_npg, 
+                          'pon': _normalize_pon}
+
 def normalize(data: pd.DataFrame, 
               measurement_col: str,
               control_col: str,
-              pos: str,
               neg: str,
+              method: Union[str, None] = None,
+              pos: Union[str, None] = None,
               group: Union[str, List[str], None] = None,
               flip: bool = False) -> pd.DataFrame:
     
-    """Normalize a column based on positive and negative controls, optionally within groups.
+    """Normalize a column based on controls, optionally within groups.
 
     Positive controls should represent the 0% signal, and negative controls
     should represent the 100% signal. If you set `flip = True`, then this is 
     reversed. 
 
     Calculations are performed within groups, such as batches or plates, 
-    indicated by the `group` column.
+    indicated by the `group` column. This function takes the group-wise mean 
+    negative controls $\mu_n$ and, optionally, positive controls
+    $\mu_p$. Then within each group calculates the normalized 
+    signal.
+
+    Two methods are offered:
+
+    - Normalized proportion of growth (NPG)
     
-    This function takes the group-wise mean of positive and negative controls 
-    ($\mu_p$ and $\mu_n$), and then within each group calculates the normalized 
-    signal, $s$, of each measured datapoint, $m$:
+    Within each group calculates the normalized signal, $s$, of each 
+    measured datapoint, $m$:
 
     $$s = \\frac{m - \mu_p}{\mu_n - \mu_p}$$
 
-    If you set `flip = True`, then this is used instead:
+    If you set `flip = True`, then this equation is used instead:
 
     $$s = \\frac{m - \mu_n}{\mu_p - \mu_n}$$
+
+    Requires both positive and negative controls.
+
+    - Proportion of negative (PON)
+
+    Within each group calculates the normalized signal, $s$, of each 
+    measured datapoint, $m$:
+
+    $$s = \\frac{m}{\mu_n}$$
+
+    If you set `flip = True`, then this equation is used instead:
+
+    $$s = 1 - \\frac{m}{\mu_n}$$
+
+    Requires only negative controls.
 
     Parameters
     ----------
@@ -44,10 +175,12 @@ def normalize(data: pd.DataFrame,
         Name of column containing raw data.
     control_col : str
         Name of column containing control indicators.
-    pos : str
-        Name of positive controls.
     neg : str
         Name of negative controls.
+    method : str
+        One of PON or NPG. Default PON.
+    pos : str, optional
+        Name of positive controls.
     group : str or list, optional
         Name of column containing the grouping variable, such 
         as plates or batches. If not set, then entire the data is 
@@ -76,80 +209,62 @@ def normalize(data: pd.DataFrame,
     Examples
     --------
     >>> import pandas as pd
-    >>> a = pd.DataFrame(dict(control=['n', 'n', '', '', 'p', 'p'], 
-    ...                  m_abs_ch1=[.1, .2, .5, .4, .9, .8], 
-    ...                  abs_ch1_wavelength=['600nm'] * 6))
+    >>> a = pd.DataFrame(dict(compound=['p', 'p', 'c1', 'c2', 'n', 'n'], 
+    ...                       m_abs_ch1=[.1, .2, .5, .4, .9, .8], 
+    ...                       abs_ch1_wavelength=['600nm'] * 6))
     >>> a  # doctest: +NORMALIZE_WHITESPACE
-        control  m_abs_ch1 abs_ch1_wavelength
-    0       n        0.1              600nm
-    1       n        0.2              600nm
-    2                0.5              600nm
-    3                0.4              600nm
-    4       p        0.9              600nm
-    5       p        0.8              600nm
-    >>> normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1')  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE, +SKIP
-        control  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm
-    0       n        0.1              600nm                0.15                0.85        1.071429
-    1       n        0.2              600nm                0.15                0.85        0.928571
-    2                0.5              600nm                0.15                0.85        0.500000
-    3                0.4              600nm                0.15                0.85        0.642857
-    4       p        0.9              600nm                0.15                0.85       -0.071429
-    5       p        0.8              600nm                0.15                0.85        0.071429
-    >>> normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1', flip=True)  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE, +SKIP
-        control  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm
-    0       n        0.1              600nm                0.15                0.85       -0.071429
-    1       n        0.2              600nm                0.15                0.85        0.071429
-    2                0.5              600nm                0.15                0.85        0.500000
-    3                0.4              600nm                0.15                0.85        0.357143
-    4       p        0.9              600nm                0.15                0.85        1.071429
-    5       p        0.8              600nm                0.15                0.85        0.928571
-    
+        compound  m_abs_ch1 abs_ch1_wavelength
+    0        p        0.1              600nm
+    1        p        0.2              600nm
+    2       c1        0.5              600nm
+    3       c2        0.4              600nm
+    4        n        0.9              600nm
+    5        n        0.8              600nm
+    >>> normalize(a, control_col='compound', pos='p', neg='n', measurement_col='m_abs_ch1')  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE, +SKIP
+        compound  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm.pon
+    0        p        0.1              600nm                0.85                0.15            0.117647
+    1        p        0.2              600nm                0.85                0.15            0.235294
+    2       c1        0.5              600nm                0.85                0.15            0.588235
+    3       c2        0.4              600nm                0.85                0.15            0.470588
+    4        n        0.9              600nm                0.85                0.15            1.058824
+    5        n        0.8              600nm                0.85                0.15            0.941176
+    >>> normalize(a, control_col='compound', pos='p', neg='n', measurement_col='m_abs_ch1', flip=True)  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE, +SKIP
+        compound  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm.pon
+    0        p        0.1              600nm                0.85                0.15            0.882353
+    1        p        0.2              600nm                0.85                0.15            0.764706
+    2       c1        0.5              600nm                0.85                0.15            0.411765
+    3       c2        0.4              600nm                0.85                0.15            0.529412
+    4        n        0.9              600nm                0.85                0.15           -0.058824
+    5        n        0.8              600nm                0.85                0.15            0.058824
+    >>> normalize(a, control_col='compound', pos='p', neg='n', measurement_col='m_abs_ch1', method='npg')  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE, +SKIP
+        compound  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm.npg
+    0        p        0.1              600nm                0.85                0.15           -0.071429
+    1        p        0.2              600nm                0.85                0.15            0.071429
+    2       c1        0.5              600nm                0.85                0.15            0.500000
+    3       c2        0.4              600nm                0.85                0.15            0.357143
+    4        n        0.9              600nm                0.85                0.15            1.071429
+    5        n        0.8              600nm                0.85                0.15            0.928571
+
     """
 
-    neg_colname, pos_colname = (measurement_col + s + '_mean' 
-                                for s in ('_neg', '_pos'))
-    norm_colname = measurement_col + '_norm'
-
-    if group is None:
-
-        group = '__unigroup__'
-        data[group] = group
-
-    if measurement_col not in data:
-        raise KeyError(f"{measurement_col=} is "
-                       f"not in data:\n\t{','.join(data.columns.tolist())}")
-
-    if pos not in data[control_col].values:
-        try:
-            raise ValueError(f"{pos=} is not in data:\n\t" +
-                             _unique_entries_str(data[control_col]))
-        except TypeError:
-            raise TypeError(f"{control_col=} is not a str column.")
-
-    if neg not in data[control_col].values:
-        raise ValueError(f"{neg=} is not in data:\n\t" +
-                         _unique_entries_str(data[control_col]))
-
-    for q, name in zip((neg, pos), 
-                       (neg_colname, pos_colname)):
-
-        control = (data.query(f'{control_col} == "{q}"')
-                       .groupby(group)[[measurement_col]]
-                       .mean()
-                       .reset_index(names=group)
-                       .rename(columns={measurement_col: name}))
-
-        data = pd.merge(data, control, how='outer')
-
-    if group == '__unigroup__':
-
-        data = data.drop(columns=group)
+    method = (method or 'pon').casefold()
     
-    if flip:
-        data[norm_colname] = ((data[measurement_col] - data[neg_colname]) / 
-                              (data[pos_colname] - data[neg_colname]))
-    else:
-        data[norm_colname] = ((data[measurement_col] - data[pos_colname]) / 
-                              (data[neg_colname] - data[pos_colname]))
+    try:
+        normalization_function = _NORMALIZATION_METHODS[method]
+    except KeyError as e:
+        raise AttributeError(f"Normalization method {method} is not supported.")
+    
+    if method == 'npg' and pos is None:
+        raise AttributeError(f"Normalization method {method} requires positive controls.")
+    
+    control_mean_names, data = _get_grouped_control_means(data=data, 
+                                                          measurement_col=measurement_col,
+                                                          control_col=control_col,
+                                                          neg=neg,
+                                                          pos=pos,
+                                                          group=group)
 
-    return data
+    return normalization_function(data=data, 
+                                  measurement_col=measurement_col,
+                                  flip=flip, 
+                                  **control_mean_names)

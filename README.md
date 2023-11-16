@@ -69,7 +69,9 @@ Finally, dose-response curves are plotted.
 ```bash
 hts parse plate-?.xlsx --data-shape row --vendor Biotek \
     | hts join --right layout.xlsx \
-    | hts normalize --control compound_name --positive RIF --negative DMSO --grouping plate_id \
+    | hts normalize --control compound_name \
+        --positive RIF --negative DMSO \
+        --grouping plate_id --method npg \
     | hts plot-dose -x concentration --facets guide_name --color compound_name \
         --output plt-test
 ```
@@ -120,19 +122,37 @@ long as the column headings aren't repeated.
 
 ### Normalization within batches 
 
-The `hts normalize` command normalizes raw measured data to be between $0$ and $1$ based on posiitve and negative controls, optionally within groups 
-(or batches) of measurements. In the example above, the positive and negative controls are defined as `RIF` and `DMSO`, and 
-should be found in the column `compound_name` (which may have been added by `hts join`).
+The `hts normalize` command normalizes raw measured data based on controls. This can add power to 
+downstream statsical analyses by mitigating batch-to-batch variation. 
 
-The positive and negative controls are averaged within each value in the `--grouping` column. In the example above, they will 
-be averaged for each `plate_id`, and these will be used to normalize the measured values of that `plate_id` according to:
+`hts normalize` adds new columns for each measured column. These columns start with `calc_` and end with `_norm.{method}`, for example `calc_abs_ch1_norm.npg` and `calc_abs_ch2_norm.npg`. Two methods are offered which 
+optionally normalize within within groups, such as batches or plates.
+
+#### Normalized proportion of growth (NPG)
+    
+This method scales raw data to be between $0$ and $1$ based on positive _and_ negative 
+controls, optionally within groups (or batches) of measurements. In the example above, 
+the positive and negative controls are defined as `RIF` and `DMSO`, and should be found in the column `compound_name` (which may have been added by `hts join`).
+
+The positive and negative controls are averaged within each value in the `--grouping` column. In 
+the example above, they will be averaged for each `plate_id`, and these will be used to normalize 
+the measured values of that `plate_id` according to:
 
 $$s = \frac{m - \mu_p}{\mu_n - \mu_p}$$
 
-where $s$ is the normalized value, $m$ is the measured value, and $\mu_p$ and $\mu_n$ are the average positive and negative controls. 
+where $s$ is the normalized value, $m$ is the measured value, and $\mu_p$ and $\mu_n$ are the mean positive and negative controls. 
 
-`hts normalize` adds new columns for each measured column. These columns start with `calc_` and end with `_norm`, for example `calc_abs_ch1_norm`
-and `calc_abs_ch2_norm`.
+#### Proportion of negative (PON) [default]
+
+This method scales raw data relative negative controls _only_, optionally within groups (or batches) of measurements. 
+
+The negative controls are averaged within each value in the `--grouping` column. In 
+the example above, they would be averaged for each `plate_id`, and these will be used to normalize 
+the measured values of that `plate_id` according to:
+
+$$s = \frac{m}{\mu_n}$$
+
+where $s$ is the normalized value, $m$ is the measured value, and $\mu_n$ is the mean negative control. 
 
 ### Plotting dose response
 
@@ -342,7 +362,7 @@ E  49  50  51  52  53  54  55  56  57  58  59  60
 F  61  62  63  64  65  66  67  68  69  70  71  72
 G  73  74  75  76  77  78  79  80  81  82  83  84
 H  85  86  87  88  89  90  91  92  93  94  95  96
->>> pivot_plate(a, value_name="well_number")  
+>>> hts.pivot_plate(a, value_name="well_number")  
     row_id column_id  well_number well_id plate_id
 0       A         1            1     A01         
 1       B         1           13     B01         
@@ -362,7 +382,7 @@ H  85  86  87  88  89  90  91  92  93  94  95  96
 This also works on the multi-sheet dictionary output of `pd.read_excel(..., sheet_names=None)`.
 
 ```python
->>> pivot_plate({'sheet_1': a}, value_name="well_number")    
+>>> hts.pivot_plate({'sheet_1': a}, value_name="well_number")    
 row_id column_id  well_number well_id plate_id
 0       A         1            1     A01  sheet_1
 1       B         1           13     B01  sheet_1
@@ -393,7 +413,7 @@ Replicates within condition groups can be annotated.
 1    g1       n        0.2              600nm
 2    g2       p        0.9              600nm
 3    g2       p        0.8              600nm
->>> replicate_table(a, group='group') 
+>>> hts.replicate_table(a, group='group') 
     group control  m_abs_ch1 abs_ch1_wavelength  replicate
 0    g1       n        0.1              600nm          1
 1    g1       n        0.2              600nm          2
@@ -404,7 +424,7 @@ Replicates within condition groups can be annotated.
 If you prefer, you can get a "wide" output.
 
 ```python
->>> replicate_table(a, group='group', wide='m_abs_ch1') 
+>>> hts.replicate_table(a, group='group', wide='m_abs_ch1') 
 replicate  rep_1  rep_2
 group                  
 g1           0.2    0.1
@@ -426,7 +446,7 @@ Values can be normalized to values between 0 and 1 relative to their positive (0
 3                0.4              600nm
 4       p        0.9              600nm
 5       p        0.8              600nm
->>> normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1') 
+>>> hts.normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1') 
     control  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm
 0       n        0.1              600nm                0.15                0.85        1.071429
 1       n        0.2              600nm                0.15                0.85        0.928571
@@ -436,10 +456,10 @@ Values can be normalized to values between 0 and 1 relative to their positive (0
 5       p        0.8              600nm                0.15                0.85        0.071429
 ```
 
-The scaling can be reveresed with `flip=True`.
+The scaling can be reversed with `flip=True`.
 
 ```python
->>> normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1', flip=True) 
+>>> hts.normalize(a, control_col='control', pos='p', neg='n', measurement_col='m_abs_ch1', flip=True) 
     control  m_abs_ch1 abs_ch1_wavelength  m_abs_ch1_neg_mean  m_abs_ch1_pos_mean  m_abs_ch1_norm
 0       n        0.1              600nm                0.15                0.85       -0.071429
 1       n        0.2              600nm                0.15                0.85        0.071429
@@ -453,18 +473,34 @@ Summary statstics and statsitcial tests relative to the negative controls can be
 
 ```python
 
->>> import pandas as pd
->>> a = pd.DataFrame(dict(group=['g1', 'g1', 'g2', 'g2'], 
-...                       control=['n', 'n', 'p', 'p'], 
-...                       m_abs_ch1=[.1, .2, .9, .8], 
-...                       abs_ch1_wavelength=['600nm'] * 4))
->>> a 
-    group control  m_abs_ch1 abs_ch1_wavelength
-0    g1       n        0.1              600nm
-1    g1       n        0.2              600nm
-2    g2       p        0.9              600nm
-3    g2       p        0.8              600nm
->>> summarize(a, measurement_col='m_abs_ch1', control_col='control', neg='n', group='group')
+>>> a = pd.DataFrame(dict(gene=['g1', 'g1', 'g2', 'g2', 'g1', 'g1', 'g2', 'g2'], 
+    ...                       compound=['n', 'n', 'n', 'n', 'cmpd1', 'cmpd1', 'cmpd2', 'cmpd2'], 
+    ...                       m_abs_ch1=[.1, .2, .9, .8, .1, .3, .5, .45], 
+    ...                       abs_ch1_wavelength=['600nm'] * 8))
+    >>> a 
+        gene compound  m_abs_ch1 abs_ch1_wavelength
+    0    g1        n       0.10              600nm
+    1    g1        n       0.20              600nm
+    2    g2        n       0.90              600nm
+    3    g2        n       0.80              600nm
+    4    g1    cmpd1       0.10              600nm
+    5    g1    cmpd1       0.30              600nm
+    6    g2    cmpd2       0.50              600nm
+    7    g2    cmpd2       0.45              600nm
+    >>> hts.summarize(a, measurement_col='m_abs_ch1', control_col='compound', neg='n', group='gene')  
+      gene abs_ch1_wavelength  m_abs_ch1_mean  m_abs_ch1_std  ...  m_abs_ch1_t.stat  m_abs_ch1_t.p  m_abs_ch1_ssmd  m_abs_ch1_log10fc
+    0   g1              600nm          0.1750       0.095743  ...          0.361158       0.742922        0.210042           0.066947
+    1   g2              600nm          0.6625       0.221265  ...         -1.544396       0.199787       -0.807183          -0.108233
+
+    [2 rows x 12 columns]
+    >>> hts.summarize(a, measurement_col='m_abs_ch1', control_col='compound', neg='n', group=['gene', 'compound'])
+    gene compound abs_ch1_wavelength  m_abs_ch1_mean  ...  m_abs_ch1_t.stat  m_abs_ch1_t.p  m_abs_ch1_ssmd  m_abs_ch1_log10fc
+    0   g1        n              600nm           0.150  ...          0.000000       1.000000        0.000000           0.000000
+    1   g2        n              600nm           0.850  ...          0.000000       1.000000        0.000000           0.000000
+    2   g1    cmpd1              600nm           0.200  ...          0.447214       0.711723        0.316228           0.124939
+    3   g2    cmpd2              600nm           0.475  ...         -6.708204       0.044534       -4.743416          -0.252725
+
+    [4 rows x 13 columns]
 ```
 
 ## Documentation

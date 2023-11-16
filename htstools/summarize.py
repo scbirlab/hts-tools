@@ -1,42 +1,47 @@
 """Functions for statistical testing and hit-calling."""
 
-from typing import Callable, List, Union
+from typing import Callable, List, Tuple, Union
 from collections.abc import Iterable
 from functools import reduce
+
+from pprint import pprint
 
 import pandas as pd
 import numpy as np
 from scipy.stats import mannwhitneyu, ttest_ind
 
 
-def _group_getter(name: str, 
-                  group: list, 
+def _group_getter(names: Union[str, Tuple], 
+                  groups: list, 
                   control: list) -> str:
+    
 
-    neg_name = tuple(n for n, g in zip(name, group) if g not in control)
+    names = names if isinstance(names, tuple) else (names, )
+    neg_name = tuple(name for name, group in zip(names, groups) 
+                     if group not in control)
     neg_name = neg_name if len(neg_name) > 1 else neg_name[0]
 
     return neg_name
 
 
 def _mw_u(negatives: Iterable, 
-          column: str,
+          measurement_col: str,
           group: list,
           control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
     
-    negs = negatives[column]
+    negs = negatives[measurement_col]
 
     def mw_u(data: pd.DataFrame) -> pd.DataFrame:
-
+        
         neg_name = _group_getter(data.name, group, control)
 
-        mwu = mannwhitneyu(data[column],
+        mwu = mannwhitneyu(data[measurement_col],
                            negs.get_group(neg_name),
                            method='exact',
                            alternative='two-sided')
         
-        df = pd.DataFrame({column + '_mwu': [mwu.statistic],
-                           column + '_mwu_p': [mwu.pvalue]})
+        df = pd.DataFrame({measurement_col + '_mwu.stat': [mwu.statistic],
+                           measurement_col + '_mwu.p': [mwu.pvalue]})
 
         return df
     
@@ -44,23 +49,23 @@ def _mw_u(negatives: Iterable,
 
 
 def _ttest(negatives: Iterable, 
-           column: str,
+           measurement_col: str,
            group: list,
            control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
     
-    negs = negatives[column]
+    negs = negatives[measurement_col]
 
     def ttest(data: pd.DataFrame) -> pd.DataFrame:
 
         neg_name = _group_getter(data.name, group, control)
 
-        tt = ttest_ind(data[column],
-                        negs.get_group(neg_name),
-                        equal_var=False,
-                        alternative='two-sided')
+        tt = ttest_ind(data[measurement_col],
+                       negs.get_group(neg_name),
+                       equal_var=False,
+                       alternative='two-sided')
         
-        df = pd.DataFrame({column + '_t': [tt.statistic],
-                           column + '_t_p': [tt.pvalue]})
+        df = pd.DataFrame({measurement_col + '_t.stat': [tt.statistic],
+                           measurement_col + '_t.p': [tt.pvalue]})
 
         return df
     
@@ -68,11 +73,11 @@ def _ttest(negatives: Iterable,
 
 
 def _ssmd(negatives: Iterable, 
-          column: str,
+          measurement_col: str,
           group: list,
           control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
     
-    negs = negatives[column]
+    negs = negatives[measurement_col]
 
     def ssmd(data: pd.DataFrame) -> pd.DataFrame:
 
@@ -80,11 +85,11 @@ def _ssmd(negatives: Iterable,
 
         this_neg = negs.get_group(neg_name)
         this_neg_mean, this_neg_var = this_neg.mean(), this_neg.var()
-        data_mean, data_var = data[column].mean(), data[column].var()
+        data_mean, data_var = data[measurement_col].mean(), data[measurement_col].var()
 
-        this_ssmd = (data_mean - this_neg_mean) / ((data_var + this_neg_var) ** .5)
+        this_ssmd = (data_mean - this_neg_mean) / np.sqrt(data_var + this_neg_var)
         
-        df = pd.DataFrame({column + '_ssmd': [this_ssmd]})
+        df = pd.DataFrame({measurement_col + '_ssmd': [this_ssmd]})
 
         return df
     
@@ -92,11 +97,11 @@ def _ssmd(negatives: Iterable,
 
 
 def _lfc(negatives: Iterable, 
-         column: str,
+         measurement_col: str,
          group: list,
          control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
     
-    negs = negatives[column]
+    negs = negatives[measurement_col]
 
     def lfc(data: pd.DataFrame) -> pd.DataFrame:
 
@@ -104,12 +109,12 @@ def _lfc(negatives: Iterable,
 
         this_neg = negs.get_group(neg_name)
         this_neg_mean = this_neg.mean()
-        data_mean = data[column].mean()
+        data_mean = data[measurement_col].mean()
 
         this_lfc = np.nan_to_num(np.log10(data_mean),
                                  nan=-15.) - np.log10(this_neg_mean)
         
-        df = pd.DataFrame({column + '_log10fc': [this_lfc]})
+        df = pd.DataFrame({measurement_col + '_log10fc': [this_lfc]})
 
         return df
     
@@ -140,7 +145,7 @@ def summarize(data: pd.DataFrame,
         The column for which statistics should be calculated.
     group : str or list
         Columns which indicate the grouping within which statistics should be calculated. These
-        groups indicate repeated measurements of the same experiemntal condition.
+        groups indicate repeated measurements of the same experimental condition.
     neg : str or list
         Negative control label(s). If more than one, should be in the same order as 
         control_col.
@@ -163,18 +168,35 @@ def summarize(data: pd.DataFrame,
     Examples
     --------
     >>> import pandas as pd
-    >>> a = pd.DataFrame(dict(group=['g1', 'g1', 'g2', 'g2'], 
-    ...                       control=['n', 'n', 'p', 'p'], 
-    ...                       m_abs_ch1=[.1, .2, .9, .8], 
-    ...                       abs_ch1_wavelength=['600nm'] * 4))
+    >>> a = pd.DataFrame(dict(gene=['g1', 'g1', 'g2', 'g2', 'g1', 'g1', 'g2', 'g2'], 
+    ...                       compound=['n', 'n', 'n', 'n', 'cmpd1', 'cmpd1', 'cmpd2', 'cmpd2'], 
+    ...                       m_abs_ch1=[.1, .2, .9, .8, .1, .3, .5, .45], 
+    ...                       abs_ch1_wavelength=['600nm'] * 8))
     >>> a  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
-        group control  m_abs_ch1 abs_ch1_wavelength
-    0    g1       n        0.1              600nm
-    1    g1       n        0.2              600nm
-    2    g2       p        0.9              600nm
-    3    g2       p        0.8              600nm
-    >>> summarize(a, measurement_col='m_abs_ch1', control_col='control', neg='n', group='group')  # doctest: +SKIP
-     
+        gene compound  m_abs_ch1 abs_ch1_wavelength
+    0    g1        n       0.10              600nm
+    1    g1        n       0.20              600nm
+    2    g2        n       0.90              600nm
+    3    g2        n       0.80              600nm
+    4    g1    cmpd1       0.10              600nm
+    5    g1    cmpd1       0.30              600nm
+    6    g2    cmpd2       0.50              600nm
+    7    g2    cmpd2       0.45              600nm
+    >>> summarize(a, measurement_col='m_abs_ch1', control_col='compound', neg='n', group='gene')  # doctest: +SKIP
+      gene abs_ch1_wavelength  m_abs_ch1_mean  m_abs_ch1_std  ...  m_abs_ch1_t.stat  m_abs_ch1_t.p  m_abs_ch1_ssmd  m_abs_ch1_log10fc
+    0   g1              600nm          0.1750       0.095743  ...          0.361158       0.742922        0.210042           0.066947
+    1   g2              600nm          0.6625       0.221265  ...         -1.544396       0.199787       -0.807183          -0.108233
+
+    [2 rows x 12 columns]
+    >>> summarize(a, measurement_col='m_abs_ch1', control_col='compound', neg='n', group=['gene', 'compound'])  # doctest: +SKIP
+    gene compound abs_ch1_wavelength  m_abs_ch1_mean  ...  m_abs_ch1_t.stat  m_abs_ch1_t.p  m_abs_ch1_ssmd  m_abs_ch1_log10fc
+    0   g1        n              600nm           0.150  ...          0.000000       1.000000        0.000000           0.000000
+    1   g2        n              600nm           0.850  ...          0.000000       1.000000        0.000000           0.000000
+    2   g1    cmpd1              600nm           0.200  ...          0.447214       0.711723        0.316228           0.124939
+    3   g2    cmpd2              600nm           0.475  ...         -6.708204       0.044534       -4.743416          -0.252725
+
+    [4 rows x 13 columns]
+
     """
     
     if not isinstance(control_col, list):
@@ -194,7 +216,8 @@ def summarize(data: pd.DataFrame,
     query = ' and '.join([f'{c} == "{n}"' 
                          for c, n in zip(control_col, neg)])
     
-    neg_group = [g for g in group if g not in control_col]
+    neg_group = [g for g in group 
+                 if g not in control_col]
     neg_controls = (data.query(query)
                         .groupby(neg_group))
 
@@ -210,16 +233,24 @@ def summarize(data: pd.DataFrame,
     summaries_to_calculate = ('mean', 'std', 'var', 'count')
     summaries_str = (key if isinstance(key, str) else key.__name__ 
                      for key in summaries_to_calculate)
-    renamer = {key:  measurement_col + '_' + key for key in summaries_str}
-    summary = (grouped[measurement_col].agg(summaries_to_calculate)
+    renamer = {key:  measurement_col + '_' + key 
+               for key in summaries_str}
+    summary = (grouped[measurement_col]
+                      .agg(summaries_to_calculate)
                       .reset_index()
                       .rename(columns=renamer))
     
-    funcs_to_apply = [f(neg_controls, measurement_col, group, control_col) 
-                      for f in (_mw_u, _ttest, _ssmd, _lfc)]
-    applied = [(grouped[[measurement_col]].apply(f)
+    funcs_to_apply = [summary_function(neg_controls, 
+                                       measurement_col, 
+                                       group, 
+                                       control_col) 
+                      for summary_function in (_mw_u, _ttest, _ssmd, _lfc)]
+    applied = [(grouped[[measurement_col]]
+                       .apply(func)
                        .reset_index()) 
-                for f in funcs_to_apply]
+                for func in funcs_to_apply]
+    applied = [a.drop(columns=[c for c in a if c.startswith('level_') and c[-1].isdigit()])
+               for a in applied]
 
     df = reduce(pd.merge, 
                 (read_type_ann, summary) + tuple(applied))
