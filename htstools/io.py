@@ -82,6 +82,7 @@ def _biotek_extract(x: Iterable) -> BiotekData:
                          for section in BiotekData._fields})
 
     section, subsection = 'Meta', ''
+    active_xlsx_hacks = False
 
     for row in x: 
         
@@ -130,17 +131,28 @@ def _biotek_extract(x: Iterable) -> BiotekData:
             act_temp_subsection = subsection.startswith('Actual Temperature') 
             
             if section == 'Results':
-                if (act_temp_subsection and 
-                    (len(row[1]) == 0 or row[1] == 'Well ID')):
-                    subsection = 'main'
-                    row = [''] + list(dropwhile(lambda x: x == '', row))
-                elif (not act_temp_subsection
-                      and row0 == ''
-                      and row[1] in ascii_uppercase):
-                    subsection = row[1]
-                    
-                if subsection in ascii_uppercase and len(row[1]) == 0:
-                    row = row[1:]
+
+                if act_temp_subsection:
+                    active_xlsx_hacks = True
+                
+                if active_xlsx_hacks:
+                    if (act_temp_subsection and 
+                        (len(row[1]) == 0 or row[1] == 'Well ID')):
+                        subsection = 'main'
+                        row = [''] + list(dropwhile(lambda x: x == '', row))
+                    elif (not act_temp_subsection
+                        and row0 == '' 
+                        and row[1] != '' and row[1] in ascii_uppercase):
+                        subsection = row[1]
+                        # row = row[1:]
+                        
+                    if subsection in ascii_uppercase:
+                        if row[1] != '':
+                            row = row[1:]
+                        else:
+                            row = row[1:]
+
+                # print(active_xlsx_hacks, section, subsection, row)
 
             getattr(data, section)[subsection].append(row[1:])
 
@@ -149,11 +161,12 @@ def _biotek_extract(x: Iterable) -> BiotekData:
 
     # more hacks to deal with XLSX export putting Actual Temperature 
     # in results section
-    act_temps_in_results = tuple(key for key in data.Results 
-                                 if key.startswith('Actual Temperature'))
-    for act_temp in act_temps_in_results:
-        data.Procedure_Details[act_temp] = data.Results[act_temp][:1]
-        del data.Results[act_temp]
+    if active_xlsx_hacks:
+        act_temps_in_results = tuple(key for key in data.Results 
+                                    if key.startswith('Actual Temperature'))
+        for act_temp in act_temps_in_results:
+            data.Procedure_Details[act_temp] = data.Results[act_temp][:1]
+            del data.Results[act_temp]
 
     return data
 
