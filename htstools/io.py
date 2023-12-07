@@ -1,6 +1,6 @@
 """Utilities for reading files from platereaders and writing columnar data."""
 
-from typing import Dict, IO, List, TextIO, Tuple, Union
+from typing import BinaryIO, Dict, IO, List, TextIO, Tuple, Union
 from collections.abc import Iterable
 from collections import defaultdict, namedtuple
 import csv
