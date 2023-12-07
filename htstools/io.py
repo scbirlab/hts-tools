@@ -1,6 +1,6 @@
 """Utilities for reading files from platereaders and writing columnar data."""
 
-from typing import BinaryIO, Dict, IO, List, TextIO, Tuple, Union
+from typing import Dict, IO, List, TextIO, Tuple, Union
 from collections.abc import Iterable
 from collections import defaultdict, namedtuple
 import csv
@@ -92,6 +92,7 @@ def _biotek_extract(x: Iterable) -> BiotekData:
             row0esc = row0.replace(' ', '_')  # to escape spaces
         
         all_none = all(len(str(item)) == 0 for item in row)
+        n_skipped = 0  # count number of skipped rows since section
 
         # First column has section (sub)headings. If there is 
         # section heading in the first column, make it the 
@@ -99,6 +100,7 @@ def _biotek_extract(x: Iterable) -> BiotekData:
         if row0esc in data._fields:
 
             section, subsection = row0esc, 'main'
+            n_skipped = 0
         
         # Otherwise, if the first column of the row has data, 
         # set this as the subsection and append the rest of
@@ -120,7 +122,36 @@ def _biotek_extract(x: Iterable) -> BiotekData:
 
         # Otherwise, append column 2 onwards as data
         elif not all_none:
+
+            # hacky way to deal with XLSX export putting Actual Temperature 
+            # in results section
+            act_temp_subsection = subsection.startswith('Actual Temperature') 
+            
+            if section == 'Results':
+                if act_temp_subsection and row[1] == '':
+                    subsection = 'main'
+                    row = row[1:]
+                elif (not act_temp_subsection
+                      and len(row0) == 0 
+                      and len(row[1]) > 0
+                      and row[1] in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
+                    subsection = row[1]
+                    
+                if subsection in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                    row = row[1:]
+
             getattr(data, section)[subsection].append(row[1:])
+
+        elif all_none:
+            n_skipped += 1
+
+    # more hacks to deal with XLSX export putting Actual Temperature 
+    # in results section
+    act_temps_in_results = tuple(key for key in data.Results 
+                                 if key.startswith('Actual Temperature'))
+    for act_temp in act_temps_in_results:
+        data.Procedure_Details[act_temp] = data.Results[act_temp][:1]
+        del data.Results[act_temp]
 
     return data
 
@@ -171,7 +202,7 @@ def _biotek_plate(data: BiotekData,
     df, read_types = defaultdict(list), defaultdict(set)
 
     row_ids = [subsection for subsection in data.Results if subsection != 'main']
-    columns = data.Results['main'][0]
+    columns = [col for col in data.Results['main'][0] if col != '']
     n_cols = len(columns)
 
     for subsection, values in data.Results.items():
@@ -200,7 +231,12 @@ def _biotek_plate(data: BiotekData,
                 df[measurement_prefix + read_type] += value[:-1]
                 df[read_type + '_wavelength'] += ([wv] * n_cols)
 
-    df = (pd.DataFrame(df))
+    col_lengths = {col: len(val) for col, val in df.items()}
+    if not len(set(col_lengths.values())) == 1:
+        message = f"ERROR: Not all columns are the same length: {col_lengths}"
+        raise AttributeError(message)
+    
+    df = pd.DataFrame(df)
     df = _biotek_common(df, data, filename)
 
     return df, read_types
@@ -351,12 +387,12 @@ def from_platereader(file: Union[IO, str, List[Union[IO, str]]],
 
         file = [file]
     
-    parsed_files = map(partial(_from_platereader, 
-                               shape=shape, 
-                               vendor=vendor, 
-                               delimiter=delimiter,
-                               measurement_prefix=measurement_prefix),
-                       file)
+    parser = partial(_from_platereader, 
+                     shape=shape, 
+                     vendor=vendor, 
+                     delimiter=delimiter,
+                     measurement_prefix=measurement_prefix)
+    parsed_files = tuple(parser(f) for f in file)
     
     return pd.concat((df for parsed_file in parsed_files 
                       for _, (df, _) in parsed_file.items()),
