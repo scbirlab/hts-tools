@@ -340,9 +340,10 @@ def plot_histogram(data: pd.DataFrame,
                    control_col: str,
                    negative: str,
                    positive: str,
-                   panel_size: float = 2.5) ->  PlotTuple:
+                   panel_size: float = 2.5) -> PlotTuple:
     
     read_type = '_'.join(x.split('_')[1:3]) + '_wavelength'
+    data = data.query(f"{read_type} != ''")
 
     if not read_type in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
