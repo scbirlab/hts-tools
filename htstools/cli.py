@@ -207,25 +207,26 @@ def _pivot(args: argparse.Namespace) -> None:
 
     pprint_dict(vars(args), 
                 'Pivoting the files with the following parameters')
-
-    df = map(partial(_load_table, 
+    
+    loader = partial(_load_table, 
                      format=args.format, 
-                     sheet_name=None), 
-             args.input)
-
-    try:
-        df = map(lambda x: {key: val.set_index('Unnamed: 0') 
-                            for key, val in x.items()}, 
-                df)
-    except AttributeError:
-        df = map(lambda x: x.set_index('Unnamed: 0'), df)
-        
-    df = map(partial(pivot_plate, value_name=args.name), 
-             df)
+                     sheet_name=None)
+    df = tuple(loader(filename) for filename in args.input)
     filenames = tuple(os.path.basename(f.name) for f in args.input)
 
-    df = pd.concat((d.assign(filename=filename)
-                    for d, filename in zip(df, filenames)), 
+    try:  # assume XLSX with sheets
+        df = tuple({sheet_name: sheet.set_index('Unnamed: 0') 
+                    for sheet_name, sheet in data.items()} 
+                   for data in df)
+    except AttributeError:  # this happens when not XLSX - just a DataFrame per file
+        df = tuple(sheet.set_index('Unnamed: 0') for sheet in df)
+
+    pivoter = partial(pivot_plate, 
+                      value_name=args.name)
+    df = tuple(pivoter(data) for data in df)
+
+    df = pd.concat((data.assign(filename=filename)
+                    for data, filename in zip(df, filenames)),
                    axis=0)
     plate_info = (df.groupby(['filename', 'plate_id'], 
                              as_index=False)[['well_id']]
