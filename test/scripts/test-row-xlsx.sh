@@ -13,6 +13,8 @@ fi
 
 mkdir -p $OUTDIR
 
+set -x
+
 hts parse $DATADIR/plate-?.xlsx --data-shape row \
     | hts join --right $DATADIR/layout.xlsx \
     | hts normalize -c norm_controls -p pos -n neg -g guide_name \
@@ -20,3 +22,5 @@ hts parse $DATADIR/plate-?.xlsx --data-shape row \
         -o $OUTDIR/plt-test
 
 touch $SUCCESFILE
+
+set +x
