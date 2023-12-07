@@ -312,8 +312,15 @@ def plot_heatmap(data: pd.DataFrame,
     plates = data[x].drop_duplicates()
     n_plates = plates.shape[0]
 
-    n_cols = int(np.ceil(n_plates ** .5))
-    n_rows = int(n_plates // n_cols)
+    n_cols = int(np.ceil(np.sqrt(n_plates)))
+    n_rows = int(np.ceil(n_plates / n_cols))
+
+    n_panels = n_cols * n_rows
+
+    if not n_panels >= n_plates:
+        ## This should never happen!
+        raise ValueError(f"ERROR: Number of heatmap panels ({n_panels}) "
+                         f"is less than the number of plates ({n_plates})!")
 
     fig, axes = plt.subplots(n_rows, n_cols, 
                              figsize=(n_cols * panel_size, 
