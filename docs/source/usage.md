@@ -7,7 +7,7 @@
     - [Plotting dose responses](#plotting-dose-response)
 - [Second pipeline example](#second-pipeline-example)
     - [Converting plate-shaped data to columns](#converting-plate-shaped-data-to-columns)
-    - [Statistcal testing](#statistical-testing)
+    - [Statistical testing](#statistical-testing)
 - [Other commands](#other-commands)
 
 **hts-tools**  provides command-line utlities to analyse and plot data
@@ -207,7 +207,7 @@ to an experimental data table (`layout.xlsx` in these examples).
 
 - `hts qc`
 
-Do quality cpntrol checks by calculating mean, standard deviation, Z\'-factor, and SSMD, and plotting them.
+Do quality control checks by calculating mean, standard deviation, Z\'-factor, and SSMD, and plotting them.
 
 ```bash
 hts parse plate-?.xlsx --data-shape row  \
@@ -232,7 +232,7 @@ hts parse plate-?.xlsx --data-shape row \
 Here, `--grouping` identifies the columns which indicate values coming from the same plate. One file is produced per
 measured and normalized (`calc_*_norm`) column.
 
-<img src="docs/source/_static/hm_calc_fluor_ch1_norm_heatmap.png" alt="" width="400">
+<img src="docs/source/_static/hm_calc_fluor_ch1_norm.pon_heatmap.png" alt="" width="400">
 
 - `hts plot-rep`
 

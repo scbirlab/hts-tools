@@ -13,6 +13,8 @@ fi
 
 mkdir -p $OUTDIR
 
+set -x
+
 hts pivot "$DATADIR/compounds.xlsx" \
       --name compound_name \
       --prefix compound_source \
@@ -47,3 +49,5 @@ hts summarize $OUTDIR/normalized.tsv -c strain_name \
     > $OUTDIR/summary-counter.tsv
 
 touch $SUCCESFILE
+
+set +x

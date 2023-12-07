@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib import axes, figure
 from matplotlib.container import ErrorbarContainer
 from matplotlib.collections import PathCollection
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 from scipy import stats
 
@@ -312,12 +313,23 @@ def plot_heatmap(data: pd.DataFrame,
     plates = data[x].drop_duplicates()
     n_plates = plates.shape[0]
 
-    n_cols = int(np.ceil(n_plates ** .5))
-    n_rows = int(n_plates // n_cols)
+    n_cols = int(np.ceil(np.sqrt(n_plates)))
+    n_rows = int(np.ceil(n_plates / n_cols))
+
+    n_panels = n_cols * n_rows
+
+    if not n_panels >= n_plates:
+        ## This should never happen!
+        raise ValueError(f"ERROR: Number of heatmap panels ({n_panels}) "
+                         f"is less than the number of plates ({n_plates})!")
 
     fig, axes = plt.subplots(n_rows, n_cols, 
                              figsize=(n_cols * panel_size, 
-                                      n_rows * panel_size))
+                                      n_rows * panel_size),
+                             layout='constrained')
+    
+    for ax in fig.axes[n_plates:]:
+        ax.set_visible(False)
 
     for ax, (plate_name, plate_data) in zip(fig.axes, data.groupby(x)):
 
@@ -326,12 +338,25 @@ def plot_heatmap(data: pd.DataFrame,
                                          columns='column_id',
                                          values=y)
 
-        ax.imshow(this_plate_data)
-        ax.set_title(':'.join(plate_name), 
+        axes_image = ax.imshow(this_plate_data,
+                               cmap='cividis')
+        cbar = fig.colorbar(axes_image, 
+                            ax=ax, 
+                            shrink=.5,
+                            orientation='vertical')
+        cbar.ax.tick_params(labelsize='xx-small')
+
+        ax.set_yticks(np.arange(this_plate_data.index.values.size), 
+                      labels=this_plate_data.index.values,
+                      size='x-small')
+        x_locs = [x for x in range(this_plate_data.columns.values.size) 
+                  if x % 2 == 0]
+        ax.set_xticks(x_locs, 
+                      labels=map(str, x_locs),
+                      size='x-small')
+        ax.set_title(':'.join(plate_name),
                      fontdict={'fontsize': 8.})
-
-    fig.tight_layout()
-
+        
     return fig, axes
 
 
