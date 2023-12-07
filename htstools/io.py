@@ -7,7 +7,9 @@ import csv
 from datetime import datetime
 from functools import partial
 from io import StringIO, TextIOBase
+from itertools import dropwhile
 import os
+from string import ascii_uppercase
 
 from openpyxl import load_workbook
 import pandas as pd
@@ -128,16 +130,16 @@ def _biotek_extract(x: Iterable) -> BiotekData:
             act_temp_subsection = subsection.startswith('Actual Temperature') 
             
             if section == 'Results':
-                if act_temp_subsection and row[1] == '':
+                if (act_temp_subsection and 
+                    (len(row[1]) == 0 or row[1] == 'Well ID')):
                     subsection = 'main'
-                    row = row[1:]
+                    row = [''] + list(dropwhile(lambda x: x == '', row))
                 elif (not act_temp_subsection
-                      and len(row0) == 0 
-                      and len(row[1]) > 0
-                      and row[1] in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
+                      and row0 == ''
+                      and row[1] in ascii_uppercase):
                     subsection = row[1]
                     
-                if subsection in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                if subsection in ascii_uppercase and len(row[1]) == 0:
                     row = row[1:]
 
             getattr(data, section)[subsection].append(row[1:])
@@ -205,6 +207,8 @@ def _biotek_plate(data: BiotekData,
     columns = [col for col in data.Results['main'][0] if col != '']
     n_cols = len(columns)
 
+    # print(data.Results)
+
     for subsection, values in data.Results.items():
 
         if subsection in row_ids:
@@ -233,8 +237,9 @@ def _biotek_plate(data: BiotekData,
 
     col_lengths = {col: len(val) for col, val in df.items()}
     if not len(set(col_lengths.values())) == 1:
-        message = f"ERROR: Not all columns are the same length: {col_lengths}"
-        raise AttributeError(message)
+        raise AttributeError(
+            f"ERROR: Not all columns are the same length: {col_lengths}"
+            )
     
     df = pd.DataFrame(df)
     df = _biotek_common(df, data, filename)
@@ -248,11 +253,14 @@ def _biotek_row(data: BiotekData,
     
     read_types = defaultdict(set)
 
-    # Row-wise data has a subheading Actual Temperature before 
+    # Row-wise XLSX data has a subheading Actual Temperature before 
     # the actual data table, hence this awkward naming
+    # data_str = '\n'.join(','.join(str(item) for item in row) 
+    #                      for row in data.Results['Actual Temperature'][1:])
+    # print(data.Results)
     data_str = '\n'.join(','.join(str(item) for item in row) 
-                         for row in data.Results['Actual Temperature'][1:])
-    
+                         for row in data.Results['main'])
+    # print(data_str)
     df = (pd.read_csv(StringIO(data_str))
             .rename(columns={'Well': 'well_id',
                              'Well ID': 'well_name'})
