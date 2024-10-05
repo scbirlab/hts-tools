@@ -1,30 +1,29 @@
-"""Functions for statistical testing and hit-calling."""
+"""Statistical testing and hit-calling."""
 
-from typing import Callable, List, Tuple, Union
-from collections.abc import Iterable
+from typing import Callable, Iterable, List, Union
 from functools import reduce
 
-from pprint import pprint
-
+from carabiner import cast
 import pandas as pd
 import numpy as np
 from scipy.stats import mannwhitneyu, ttest_ind
 
+def _group_getter(
+    names: Union[str, Iterable[str]], 
+    groups: Iterable[str], 
+    control: Iterable[str]
+) -> str:
 
-def _group_getter(names: Union[str, Tuple], 
-                  groups: list, 
-                  control: list) -> str:
-    
-
-    names = names if isinstance(names, tuple) else (names, )
-    neg_name = tuple(name for name, group in zip(names, groups) 
-                     if group not in control)
-    neg_name = neg_name if len(neg_name) > 1 else neg_name[0]
-
+    names = tuple(cast(names, to=list))
+    neg_name = tuple(
+        name for name, group in zip(names, groups) 
+        if group not in control
+    )
+    # neg_name = neg_name if len(neg_name) > 1 else neg_name[0]
     return neg_name
 
 
-def _mw_u(negatives: Iterable, 
+def _mw_u(negatives: pd.DataFrame, 
           measurement_col: str,
           group: list,
           control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
@@ -32,17 +31,17 @@ def _mw_u(negatives: Iterable,
     negs = negatives[measurement_col]
 
     def mw_u(data: pd.DataFrame) -> pd.DataFrame:
-        
         neg_name = _group_getter(data.name, group, control)
-
-        mwu = mannwhitneyu(data[measurement_col],
-                           negs.get_group(neg_name),
-                           method='exact',
-                           alternative='two-sided')
-        
-        df = pd.DataFrame({measurement_col + '_mwu.stat': [mwu.statistic],
-                           measurement_col + '_mwu.p': [mwu.pvalue]})
-
+        mwu = mannwhitneyu(
+            data[measurement_col],
+            negs.get_group(neg_name),
+            method='exact',
+            alternative='two-sided',
+        )
+        df = pd.DataFrame({
+            measurement_col + '_mwu.stat': [mwu.statistic],
+            measurement_col + '_mwu.p': [mwu.pvalue]
+        })
         return df
     
     return mw_u

@@ -1,62 +1,71 @@
-"""Functions to facilitate handling tables."""
+"""Utilities for joining and pivoting tables."""
 
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple, Union
 from functools import reduce
 
+from carabiner import print_err
 import numpy as np
 import pandas as pd
+from pandas import DataFrame
 
-from .utils import _print_err, row_col_to_well
+from .utils import row_col_to_well
 
+_DUMMY_GROUP = "__group__"
 
-def _join(left: pd.DataFrame, 
-          right: pd.DataFrame,
-          how: str = 'inner',
-          sheet_name: Union[str, None] = None) -> pd.DataFrame:
+def _join(
+    left: DataFrame, 
+    right: DataFrame,
+    how: str = 'inner',
+    sheet_name: Optional[str] = None
+) -> DataFrame:
     
     left_cols, right_cols = left.columns.tolist(), right.columns.tolist()
     shared_cols = tuple(set(left_cols).intersection(right_cols))
     
     if len(shared_cols) == 0:
-
-        raise AttributeError('No shared columns for join.'
-                             f'\n\tLeft: {", ".join(left_cols)}'
-                             f'\n\tRight: {", ".join(right_cols)}'
-                             + (f'\n\tRight sheet name: {sheet_name}' 
-                                if sheet_name is not None else ''))
+        raise AttributeError(
+            'No shared columns for join.'
+            f'\n\tLeft: {", ".join(left_cols)}'
+            f'\n\tRight: {", ".join(right_cols)}'
+            + (f'\n\tRight sheet name: {sheet_name}' 
+            if sheet_name is not None else '')
+        )
 
     try:
-        data = pd.merge(left, right, 
-                        how=how,
-                        on=shared_cols)
+        data = pd.merge(
+            left, 
+            right, 
+            how=how,
+            on=shared_cols,
+        )
     # probably joining on a type mismatch, usually int <-> str
     except ValueError as e:  
         col_types = {c: (left[c].dtype, right[c].dtype) 
                      for c in shared_cols}
         mismatches = [key for key, val in col_types.items() if val[0] != val[1]]
-        _print_err(f'{col_types=}')
-        _print_err(f'{mismatches=}')
+        print_err(f'{col_types=}')
+        print_err(f'{mismatches=}')
         raise e
     else:    
         return shared_cols, data
     
 
-def _join_reduce(how: str = 'inner') -> Tuple[Tuple[str], pd.DataFrame]:
+def _join_reduce(
+    how: str = 'inner'
+) -> Tuple[Tuple[str], DataFrame]:
     
     def join_reduce(left, right):
-
         prev_shared_cols, left = left
-
         shared_cols, data = _join(left, right, how=how)
-
         return prev_shared_cols + (shared_cols, ), data
     
     return join_reduce
 
 
-def join(left: pd.DataFrame, 
-         right: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
-         how: str = 'inner') -> pd.DataFrame:
+def join(
+    left: DataFrame, 
+    right: Union[DataFrame, Dict[str, DataFrame]],
+    how: str = 'inner') -> DataFrame:
     
     """Perform a database-stype join (merge) between two dataframes.
 
@@ -119,39 +128,45 @@ def join(left: pd.DataFrame,
 
     """
 
-    if isinstance(right, pd.DataFrame):
-
+    if isinstance(right, DataFrame):
         return _join(left, right, how)
-    
     elif isinstance(right, dict):
-
         dict_values = list(right.values())
-        
-        if isinstance(dict_values[0], pd.DataFrame):
+        if isinstance(dict_values[0], DataFrame):
+            return reduce(
+                _join_reduce(how=how), 
+                dict_values,
+                (tuple(), left),
+            )
+    else:
+        raise NotImplementedError(f"Right table of type {type(right)} not supported.")
 
-            return reduce(_join_reduce(how=how), 
-                          dict_values,
-                          (tuple(), left))
+
+def _pivot_plate_df(
+    df: DataFrame,
+    value_name: str
+) -> DataFrame:
     
-    raise NotImplementedError(f"Right table of type {type(right)} not supported.")
-
-
-def _pivot_plate_df(df: pd.DataFrame,
-                    value_name: str) -> pd.DataFrame:
-    
-    df = (df.reset_index(names='row_id')
-            .melt(id_vars='row_id', 
-                  var_name='column_id', 
-                  value_name=value_name)
-            .assign(well_id=lambda x: row_col_to_well(x['row_id'], 
-                                                      x['column_id']),
-                    plate_id=''))
-
+    df = (
+        df
+        .reset_index(names='row_id')
+        .melt(
+            id_vars='row_id', 
+            var_name='column_id', 
+            value_name=value_name
+        )
+        .assign(
+            well_id=lambda x: row_col_to_well(x['row_id'], x['column_id']),
+            plate_id='',
+        )
+    )
     return df
 
 
-def _pivot_plate_excel(df: Dict[str, pd.DataFrame],
-                       value_name: str) -> pd.DataFrame:
+def _pivot_plate_excel(
+    df: Dict[str, DataFrame],
+    value_name: str
+) -> DataFrame:
     
     dfs = ((_pivot_plate_df(sheet_data, value_name)
                   .assign(plate_id=sheet_name)) 
@@ -160,8 +175,10 @@ def _pivot_plate_excel(df: Dict[str, pd.DataFrame],
     return pd.concat(dfs, axis=0)
 
 
-def pivot_plate(df: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
-                value_name: str = 'value') -> pd.DataFrame:
+def pivot_plate(
+    df: Union[DataFrame, Mapping[str, DataFrame]],
+    value_name: str = 'value'
+) -> DataFrame:
     
     """Pivot from a row x column plate format to a columnar format.
 
@@ -237,28 +254,25 @@ def pivot_plate(df: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
 
     """
 
-    if isinstance(df, dict):
-
+    if isinstance(df, Mapping):
         return _pivot_plate_excel(df, value_name)
-    
-    elif isinstance(df, pd.DataFrame):
-
+    elif isinstance(df, DataFrame):
         return _pivot_plate_df(df, value_name)
-    
-    raise ValueError(f"df is a {type(df)}, which is not supported")
+    else:
+        raise ValueError(f"df is a {type(df)}, which is not supported")
 
 
-def _replicator(x: pd.DataFrame) -> pd.DataFrame:
-
+def _replicator(x: DataFrame) -> DataFrame:
     idx = np.arange(x.shape[0])
     np.random.shuffle(idx)
-
     return x.assign(replicate=idx + 1)
 
 
-def replicate_table(data: pd.DataFrame,
-                    group: Union[str, List[str], None] = None,
-                    wide: Union[str, None] = None) -> pd.DataFrame:
+def replicate_table(
+    data: DataFrame,
+    group: Optional[Union[str, Iterable[str]]] = None,
+    wide: Optional[str] = None
+) -> DataFrame:
     
     """Annotate a dataframe with replicates within a group.
 
@@ -316,27 +330,28 @@ def replicate_table(data: pd.DataFrame,
     """
 
     if group is None:
-
-        group = '__unigroup__'
+        group = _DUMMY_GROUP
         data[group] = group
 
-    data = (data.groupby(group,
-                         group_keys=False)
-                .apply(_replicator))
+    data = (
+        data
+        .groupby(group, group_keys=False)
+        .apply(_replicator)
+    )
     
     if wide is not None:
-
         if wide not in data:
             raise KeyError(f"Wide column '{wide}' not in data.")
                        
-        data = pd.pivot_table(data.assign(replicate=lambda x: 'rep_' + 
-                                            x['replicate'].astype(str)),
-                              index=group,
-                              columns='replicate', 
-                              values=wide)
+        data = pd.pivot_table(
+            data.assign(
+                replicate=lambda x: 'rep_' + x['replicate'].astype(str)),
+                index=group,
+                columns='replicate', 
+                values=wide,
+            )
     
-    if group == '__unigroup__':
-
+    if group == _DUMMY_GROUP:
         data = data.drop(columns=[group])
 
     return data
