@@ -16,34 +16,39 @@ mkdir -p $OUTDIR
 set -x
 
 hts pivot "$DATADIR/compounds.xlsx" \
-      --name compound_name \
-      --prefix compound_source \
-      > $OUTDIR/pivoted-compounds.tsv
+    --name compound_name \
+    --prefix compound_source \
+    -o $OUTDIR/pivoted-compounds.tsv
 
-hts parse $DATADIR/170423*.txt --data-shape plate \
-    | hts join --right $DATADIR/sample-sheet.csv \
-    | hts join --right $OUTDIR/pivoted-compounds.tsv \
-    | hts normalize -c compound_name -p RIF -n DMSO -g strain_name sample_id plate_id \
-    > $OUTDIR/normalized.tsv
+hts parse $DATADIR/170423*.txt --data-shape plate -o $OUTDIR/parsed.tsv
+hts join $OUTDIR/parsed.tsv --right $DATADIR/sample-sheet.csv --o $OUTDIR/parsed-joined.tsv
+hts join $OUTDIR/parsed-joined.tsv --right $OUTDIR/pivoted-compounds.tsv -o $OUTDIR/parsed-joined-ann.tsv
+hts normalize $OUTDIR/parsed-joined-ann.tsv \
+    -c compound_name -p RIF -n DMSO \
+    -g strain_name sample_id plate_id \
+    -o $OUTDIR/parsed-joined-ann-norm.tsv
 
-hts plot-hm $OUTDIR/normalized.tsv \
+normfile=$OUTDIR/parsed-joined-ann-norm.tsv
+hts plot-hm $normfile \
       -g strain_name sample_id plate_id \
       --output $OUTDIR/hm
 
-hts plot-rep $OUTDIR/normalized.tsv \
+hts plot-rep $normfile \
     -c compound_name -p RIF -n DMSO -g strain_name compound_name \
     --output $OUTDIR/rep
 
-hts plot-hist $OUTDIR/normalized.tsv \
+hts plot-hist $normfile \
     -c compound_name -p RIF -n DMSO \
     --output $OUTDIR/hist
 
-hts qc $OUTDIR/normalized.tsv -c compound_name \
+hts qc $normfile \
+    -c compound_name \
     -p RIF -n DMSO -g strain_name sample_id plate_id \
     --plot $OUTDIR/qc-plot \
     > $OUTDIR/qc.tsv
 
-hts summarize $OUTDIR/normalized.tsv -c strain_name \
+hts summarize $normfile \
+    -c strain_name \
     -p RIF -n WT -g strain_name compound_name \
     --plot $OUTDIR/summary-counter \
     > $OUTDIR/summary-counter.tsv
