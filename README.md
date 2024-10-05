@@ -229,8 +229,8 @@ This command also calculates other summary statistics such as between-replicate 
 prefix is provided to the `--plot` option, then volcano and flashlight plots are produced, which may be useful for identifying 
 hits of high throughput screens.
 
-<img src="docs/source/_static/summary-counter_fluor_ch1_norm_volcano.png" alt="" width="600">
-<img src="docs/source/_static/summary-counter_fluor_ch1_norm_flashlight.png" alt="" width="600">
+<img src="docs/source/_static/summary-counter_fluor_ch1_norm_volcano.png" alt="" width="300">
+<img src="docs/source/_static/summary-counter_fluor_ch1_norm_flashlight.png" alt="" width="300">
 
 ## Other commands
 
