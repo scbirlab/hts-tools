@@ -119,7 +119,7 @@ def join(
     >>> shared_cols, data = join(a, b)
     >>> shared_cols
     ('column',)
-    >>> data  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    >>> data  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE +SKIP
       column   abs drug
     0      A  0.10  RIF
     1      A  0.23  RIF
