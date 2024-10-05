@@ -1,38 +1,17 @@
 """Miscellaneous utilities for hts-tools."""
 
-from typing import Union
-from collections.abc import Mapping
+from typing import Mapping, Union
 import sys
 
 import numpy as np
-import pandas as pd
+from numpy.typing import ArrayLike
+from pandas import Series
 
-cbpal = ('#EE7733', '#0077BB', '#33BBEE', '#EE3377', '#CC3311', '#009988', '#BBBBBB', "#000000")
-
-def _print_err(*args, **kwargs) -> None:
-
-    return print(*args, **kwargs, file=sys.stderr)
-
-
-def pprint_dict(x: Mapping, 
-                message: str) -> None:
-    
-    key_val_str = (f'{key}: {val:.2f}' if isinstance(val, float) else f'{key}: {val}'
-                   for key, val in x.items())
-
-    _print_err(f'{message}:\n\t' + '\n\t'.join(key_val_str))
-    
-    return None
-
-
-def _pandasify(x: Union[list, np.ndarray]) -> pd.Series:
-
-    return pd.Series(x)
-
-
-def row_col_to_well(row: Union[pd.Series, list, np.ndarray], 
-                    col: Union[pd.Series, list, np.ndarray], 
-                    pad: bool = True) -> pd.Series:
+def row_col_to_well(
+    row: ArrayLike, 
+    col: ArrayLike, 
+    pad: bool = True
+) -> Series:
     
     """Concatenate row label and column label columns to a well label column.
 
@@ -69,7 +48,7 @@ def row_col_to_well(row: Union[pd.Series, list, np.ndarray],
     """
 
     if pad:
-        
-        col = _pandasify(col).astype(str).str.zfill(2)
-
-    return _pandasify(row).astype(str).str.cat(_pandasify(col).astype(str))
+        col = Series(col).astype(str).str.zfill(2)
+    else:
+        col = Series(col).astype(str)
+    return Series(row).astype(str).str.cat(col)
