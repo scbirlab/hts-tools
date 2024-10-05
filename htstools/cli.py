@@ -352,6 +352,7 @@ def _summarize(args: Namespace) -> None:
                 log_color=True,
                 vlines=[0.],
                 hlines=[0.],
+                aspect_ratio=1.15,
             )
             _save_plot(
                 fig, 

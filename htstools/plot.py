@@ -274,7 +274,7 @@ def plot_mean_sd(
         panel_size=panel_size / .7, 
         aspect_ratio=.7,
     )
-    for m, s in zip((y_pos_mean, y_neg_mean), (y_pos_sd, y_neg_sd)):
+    for m, s, label in zip((y_pos_mean, y_neg_mean), (y_pos_sd, y_neg_sd), ("Positive", "Negative")):
         y1 = data_to_plot[m] - data_to_plot[s]
         y2 = data_to_plot[m] + data_to_plot[s]
 
@@ -282,6 +282,7 @@ def plot_mean_sd(
             'grouping', 
             m, 
             data=data_to_plot,
+            label=label,
         )
         ax.fill_between(
             'grouping', 
@@ -289,6 +290,7 @@ def plot_mean_sd(
             y2,
             data=data_to_plot,
             alpha=.7,
+            label=label,
         )
     ax.tick_params(
         axis='x', 
@@ -307,14 +309,14 @@ def plot_zprime(
     data: DataFrame,
     x: Union[str, Iterable[str]], 
     y: str, 
-    panel_size: float = _PANEL_SIZE
+    panel_size: float = _PANEL_SIZE * 1.8
 ) -> PlotTuple:
     x = cast(x, to=list)
     fig, ax = grid(
         panel_size=panel_size, 
         aspect_ratio=.8,
     )
-    markersize = _MARKER_SIZE
+    markersize = _MARKER_SIZE * 2.
     y_ = ('calc_' + y + '_zprime')
 
     data_to_plot = data[x + [y_]].copy()
@@ -373,11 +375,13 @@ def plot_heatmap(
 
     if not n_panels >= n_plates:
         ## This should never happen!
-        raise ValueError(f"ERROR: Number of heatmap panels ({n_panels}) "
-                         f"is less than the number of plates ({n_plates})!")
+        raise ValueError(
+            f"ERROR: Number of heatmap panels ({n_panels}) is less than the number of plates ({n_plates})!")
 
-    fig, axes = grid(nrow=n_rows, ncol=n_cols)
-    
+    fig, axes = grid(
+        nrow=n_rows, 
+        ncol=n_cols,
+    )
     for ax in fig.axes[n_plates:]:
         ax.set_visible(False)
 
@@ -410,7 +414,7 @@ def plot_heatmap(
         ]
         ax.set_xticks(
             x_locs, 
-            labels=map(str, x_locs),
+            labels=[str(loc + 1) for loc in x_locs],
             size='x-small',
         )
         ax.set_title(
@@ -490,7 +494,8 @@ def plot_histogram(
                     title=title,
                 )
             ax.set_xscale('log')
-    add_legend(ax)
+            if title == "Controls":
+                add_legend(ax)
     return fig, ax
 
 
@@ -597,13 +602,17 @@ def plot_scatter(
     vlines: Optional[Iterable[float]] = None,
     x_log: bool = False,
     y_log: bool = False,
-    panel_size: float = _PANEL_SIZE
+    panel_size: float = _PANEL_SIZE,
+    **kwargs
 ) -> PlotTuple:
     
     hlines = hlines or []
     vlines = vlines or []
     data = data.copy()
-    fig, ax = grid(panel_size=panel_size)
+    fig, ax = grid(
+        panel_size=panel_size,
+        **kwargs
+    )
     x_col, y_col, c_col = (
         ('calc_' + measurement_col + dimension) 
         if dimension is not None else dimension 
