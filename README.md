@@ -248,8 +248,8 @@ hts parse plate-?.xlsx --data-shape row  \
   > qc.tsv
 ```
 
-<img src="docs/source/_static/qc-plot_fluor_ch1_mean_sd.png" alt="" width="600">
-<img src="docs/source/_static/qc-plot_fluor_ch1_zprime.png" alt="" width="600">
+<img src="docs/source/_static/qc-plot_fluor_ch1_mean_sd.png" alt="" width="300">
+<img src="docs/source/_static/qc-plot_fluor_ch1_zprime.png" alt="" width="300">
 
 - `hts plot-hm`
 
