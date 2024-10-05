@@ -15,11 +15,14 @@ mkdir -p $OUTDIR
 
 set -x
 
-hts parse $DATADIR/plate-?.xlsx --data-shape row \
-    | hts join --right $DATADIR/layout.xlsx \
-    | hts normalize -c norm_controls -p pos -n neg -g guide_name \
-    | hts plot-dose -x concentration -p guide_name -c compound_name \
-        -o $OUTDIR/plt-test
+hts parse $DATADIR/plate-?.xlsx --data-shape row -o $OUTDIR/parsed.tsv
+hts join $OUTDIR/parsed.tsv --right $DATADIR/layout.xlsx  -o $OUTDIR/parsed-joined.tsv
+hts normalize $OUTDIR/parsed-joined.tsv -c norm_controls -p pos -n neg -g guide_name \
+    -o $OUTDIR/parsed-joined-norm.tsv
+hts plot-dose $OUTDIR/parsed-joined-norm.tsv \
+    -x concentration -p guide_name -c compound_name \
+    --x-log \
+    -o $OUTDIR/plt-test
 
 touch $SUCCESFILE
 
