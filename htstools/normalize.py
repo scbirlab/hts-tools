@@ -1,83 +1,85 @@
 """Functions for normalizing data."""
 
-from typing import List, Union
+from typing import Iterable, List, Optional, Union
+from functools import partial
 
+from carabiner import print_err
 import pandas as pd
 
 def _unique_entries_str(x: pd.DataFrame) -> str:
-
     return ','.join(sorted(map(str, x.unique())))
 
 
-def _check_controls(data: pd.DataFrame, 
-                    measurement_col: str,
-                    control_col: str,
-                    value: str) -> None:
+def _check_controls(
+    data: pd.DataFrame, 
+    measurement_col: str,
+    control_col: str,
+    value: str
+) -> None:
         
     if value not in data[control_col].values:
-
         try:
-
             raise ValueError(f"{value=} is not in data:\n\t" +
                             _unique_entries_str(data[control_col]))
-        
         except TypeError:
-
             raise TypeError(f"{control_col=} is not a str column.")
 
     return None
 
 
-def _get_grouped_control_means(data: pd.DataFrame, 
-                               measurement_col: str,
-                               control_col: str,
-                               neg: str,
-                               pos: Union[str, None] = None,
-                               group: Union[str, List[str], None] = None) -> pd.DataFrame:
+def _get_grouped_control_means(
+    data: pd.DataFrame, 
+    measurement_col: str,
+    control_col: str,
+    neg: str,
+    pos: Optional[str] = None,
+    group: Optional[Union[str, Iterable[str]]] = None
+) -> pd.DataFrame:
 
     if group is None:
-
-        group = '__unigroup__'
-        data[group] = group
-
+        group = '__group__'
+        data = data.assign(**{group: group})
     if measurement_col not in data:
-        raise KeyError(f"{measurement_col=} is "
-                       f"not in data:\n\t{','.join(data.columns.tolist())}")
+        raise KeyError(
+            f"{measurement_col=} is not in data:\n\t{','.join(data.columns.tolist())}"
+        )
     
-    control_values = {control: value 
-                      for control, value in zip(('neg_mean', 'pos_mean'), (neg, pos))
-                      if value is not None}
-    mean_control_column_names = {control: measurement_col + s + '_mean' 
-                                 for control, s in zip(control_values, ('_neg', '_pos'))}
+    control_values = {
+        control: value for control, value in zip(('neg_mean', 'pos_mean'), (neg, pos))
+        if value is not None
+    }
+    mean_control_column_names = {
+        control: measurement_col + s + '_mean' for control, s in zip(control_values, ('_neg', '_pos'))
+    }
 
-    _check_controls(data=data,
-                    measurement_col=measurement_col,
-                    control_col=control_col,
-                    value=neg)
+    control_checker = partial(
+        _check_controls,
+        data=data,
+        measurement_col=measurement_col,
+        control_col=control_col,
+    )
+    control_checker(value=neg)
     
     if pos is not None:
-
-        _check_controls(data=data,
-                    measurement_col=measurement_col,
-                    control_col=control_col,
-                    value=pos)
+        control_checker(value=pos)
 
     for control, value in control_values.items():
-        
         name = mean_control_column_names[control]
-
-        control = (data.query(f'{control_col} == "{value}"')
-                       .groupby(group)[[measurement_col]]
-                       .mean()
-                       .reset_index(names=group)
-                       .rename(columns={measurement_col: name}))
-
+        print_err(
+            data.query(f'{control_col} == "{value}"')[measurement_col]
+        )
+        control = (
+            data
+            .query(f'{control_col} == "{value}"')
+            .groupby(group)[[measurement_col]]
+            .mean()
+            .reset_index(names=group)
+            .rename(columns={measurement_col: name})
+        )
         data = pd.merge(data, control, how='outer')
 
-    if group == '__unigroup__':
-
+    if group == '__group__':
         data = data.drop(columns=group)
-
     return mean_control_column_names, data
 
 
@@ -127,7 +129,7 @@ def normalize(data: pd.DataFrame,
               group: Union[str, List[str], None] = None,
               flip: bool = False) -> pd.DataFrame:
     
-    """Normalize a column based on controls, optionally within groups.
+    r"""Normalize a column based on controls, optionally within groups.
 
     Positive controls should represent the 0% signal, and negative controls
     should represent the 100% signal. If you set `flip = True`, then this is 
@@ -257,14 +259,20 @@ def normalize(data: pd.DataFrame,
     if method == 'npg' and pos is None:
         raise AttributeError(f"Normalization method {method} requires positive controls.")
     
-    control_mean_names, data = _get_grouped_control_means(data=data, 
-                                                          measurement_col=measurement_col,
-                                                          control_col=control_col,
-                                                          neg=neg,
-                                                          pos=pos,
-                                                          group=group)
+    print_err(method, measurement_col, control_col, neg, pos, group)
+    print_err(data)
+    control_mean_names, data = _get_grouped_control_means(
+        data=data, 
+        measurement_col=measurement_col,
+        control_col=control_col,
+        neg=neg,
+        pos=pos,
+        group=group,
+    )
 
-    return normalization_function(data=data, 
-                                  measurement_col=measurement_col,
-                                  flip=flip, 
-                                  **control_mean_names)
+    return normalization_function(
+        data=data, 
+        measurement_col=measurement_col,
+        flip=flip, 
+        **control_mean_names,
+    )

@@ -10,10 +10,11 @@ from itertools import dropwhile
 import os
 from string import ascii_uppercase
 
-from carabiner import cast
+from carabiner import cast, print_err
 from carabiner.pd import sniff
 from openpyxl import load_workbook
 import pandas as pd
+import numpy as np
 
 from .utils import row_col_to_well
 
@@ -192,7 +193,8 @@ def _parse_read_name(
 def _biotek_plate(
     data: BiotekData,
     filename: str,
-    measurement_prefix: str = 'measured_'
+    measurement_prefix: str = 'measured_',
+    overflow_value: str = "OVRFLW"
 ) -> Tuple[pd.DataFrame, Dict[str, set]]:
     
     df, read_types = defaultdict(list), defaultdict(set)
@@ -202,9 +204,7 @@ def _biotek_plate(
     n_cols = len(columns)
 
     for subsection, values in data.Results.items():
-
         if subsection in row_ids:
-
             these_rows = ([subsection] * n_cols)
 
             df['row_id'] += these_rows
@@ -212,18 +212,13 @@ def _biotek_plate(
             df['well_id'] += row_col_to_well(these_rows, columns).tolist()
 
             abs_count, fluor_count = 0, 0
-
             for value in values:
-
-                (read_type, 
-                 wv, 
-                 abs_count, 
-                 fluor_count) = _parse_read_name(value[-1],  # very last col gives wavelengths
-                                                 abs_count,
-                                                 fluor_count)
-
+                (read_type, wv, abs_count, fluor_count) = _parse_read_name(
+                    value[-1],  # very last col gives wavelengths
+                    abs_count,
+                    fluor_count,
+                )
                 read_types[read_type].add(wv)
-
                 df[measurement_prefix + read_type] += value[:-1]
                 df[read_type + '_wavelength'] += ([wv] * n_cols)
 
@@ -234,6 +229,10 @@ def _biotek_plate(
         )
     
     df = pd.DataFrame(df)
+    for col in df:
+        if col.startswith(measurement_prefix):
+            # replace Biotek "OVRFLW" with NaN
+            df[col] = np.where(df[col] == overflow_value, np.nan, df[col]).astype(float)
     df = _biotek_common(df, data, filename)
 
     return df, read_types
@@ -252,14 +251,19 @@ def _biotek_row(
     # data_str = '\n'.join(','.join(str(item) for item in row) 
     #                      for row in data.Results['Actual Temperature'][1:])
     # print(data.Results)
-    data_str = '\n'.join(','.join(str(item) for item in row) 
-                         for row in data.Results['main'])
+    data_str = '\n'.join(
+        ','.join(str(item) for item in row) for row in data.Results['main']
+    )
     # print(data_str)
     df = (pd.read_csv(StringIO(data_str))
-            .rename(columns={'Well': 'well_id',
-                             'Well ID': 'well_name'})
-            .assign(row_id=lambda x: x['well_id'].str.slice(stop=1),
-                    column_id=lambda x: x['well_id'].str.slice(start=1).astype(int)))
+          .rename(columns={
+            'Well': 'well_id',
+            'Well ID': 'well_name'
+            })
+            .assign(
+                row_id=lambda x: x['well_id'].str.slice(stop=1),
+                column_id=lambda x: x['well_id'].str.slice(start=1).astype(int)),
+            )
 
     abs_count, fluor_count = 0, 0
     cols_to_drop = [col for col in df if col.startswith('Unnamed')]
@@ -269,9 +273,11 @@ def _biotek_row(
         if not header.startswith('Unnamed') and ':' in header:  # this is a data column
 
             (read_type, wv, 
-             abs_count, fluor_count) = _parse_read_name(header,
-                                                        abs_count,
-                                                        fluor_count)
+             abs_count, fluor_count) = _parse_read_name(
+                header,
+                abs_count,
+                fluor_count,
+            )
 
             read_types[read_type].add(wv)
             df[measurement_prefix + read_type] = df[header].copy()
