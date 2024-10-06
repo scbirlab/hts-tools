@@ -1,6 +1,6 @@
 """Command-line interface for hts-tools."""
 
-__version__ = "0.0.4"
+__version__ = "0.0.4.post1"
 
 from typing import Callable, Dict, Iterable, IO, List, Mapping, TextIO, Tuple, Union
 from argparse import FileType, Namespace
