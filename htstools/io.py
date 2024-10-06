@@ -255,15 +255,17 @@ def _biotek_row(
         ','.join(str(item) for item in row) for row in data.Results['main']
     )
     # print(data_str)
-    df = (pd.read_csv(StringIO(data_str))
-          .rename(columns={
-            'Well': 'well_id',
-            'Well ID': 'well_name'
-            })
-            .assign(
-                row_id=lambda x: x['well_id'].str.slice(stop=1),
-                column_id=lambda x: x['well_id'].str.slice(start=1).astype(int)),
-            )
+    df = (
+        pd.read_csv(StringIO(data_str))
+        .rename(columns={
+        'Well': 'well_id',
+        'Well ID': 'well_name'
+        })
+        .assign(
+            row_id=lambda x: x['well_id'].str.slice(stop=1),
+            column_id=lambda x: x['well_id'].str.slice(start=1).astype(int)
+        )
+    )
 
     abs_count, fluor_count = 0, 0
     cols_to_drop = [col for col in df if col.startswith('Unnamed')]
