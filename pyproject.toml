@@ -1,6 +1,6 @@
 [project]
 name = "hts-tools"
-version = "0.0.4.post1"
+version = "0.0.4.post2"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
