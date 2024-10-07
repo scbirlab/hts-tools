@@ -1,3 +1,6 @@
+from importlib.metadata import version
+__version__ = version('hts-tools')
+
 from .io import from_platereader
 from .normalize import normalize
 from .plot import (

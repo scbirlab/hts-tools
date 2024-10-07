@@ -65,9 +65,6 @@ def _get_grouped_control_means(
 
     for control, value in control_values.items():
         name = mean_control_column_names[control]
-        print_err(
-            data.query(f'{control_col} == "{value}"')[measurement_col]
-        )
         control = (
             data
             .query(f'{control_col} == "{value}"')
@@ -259,8 +256,6 @@ def normalize(data: pd.DataFrame,
     if method == 'npg' and pos is None:
         raise AttributeError(f"Normalization method {method} requires positive controls.")
     
-    print_err(method, measurement_col, control_col, neg, pos, group)
-    print_err(data)
     control_mean_names, data = _get_grouped_control_means(
         data=data, 
         measurement_col=measurement_col,
