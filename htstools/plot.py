@@ -405,7 +405,7 @@ def plot_heatmap(
         cbar.ax.tick_params(labelsize='xx-small')
 
         ax.set_yticks(
-            np.arange(this_plate_data.index.values.size) + 1, 
+            np.arange(this_plate_data.index.values.size), 
             labels=this_plate_data.index.values,
             size='x-small',
         )

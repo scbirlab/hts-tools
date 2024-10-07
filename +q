@@ -1,0 +1,11 @@
+Remove debug messsages, addresses #16
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# Date:      Mon Oct 7 09:58:33 2024 +0100
+#
+# On branch bug-squashing
+# Changes to be committed:
+#	modified:   htstools/normalize.py
+#
