@@ -90,7 +90,10 @@ def _plot_mean_and_scatter(
         **kwargs
     )
     ax, scatter = _plot_scatter_open_circles(
-        ax, data, x, y, 
+        ax, 
+        data, 
+        x, 
+        y, 
         color=color, 
         s=s * 3., 
         zorder=zorder,
@@ -227,14 +230,14 @@ def plot_dose_response(
                     zorder=5,
                 )
 
-            for color_name, color_data in facet_data.groupby(color):
+            for i, (color_name, color_data) in enumerate(facet_data.groupby(color)):
                 if color_name != color_control:
                     _plot_mean_and_scatter(
                         ax, 
                         color_data, 
                         x, 
                         y, 
-                        color=None if color_name != DEFAULT else _DARK_GREY,
+                        color=f"C{i}" if color_name != DEFAULT else "C1",
                         s=markersize, 
                         capsize=capsize,
                         label=color_name if color_name != DEFAULT else '',
