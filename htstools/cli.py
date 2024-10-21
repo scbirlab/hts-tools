@@ -434,6 +434,7 @@ def _plot_dose(args: Namespace) -> None:
             hlines=[0., 1.] if column.__contains__('_norm.') else [0.],
             format=args.plot_format,
             x_log=args.x_log,
+            color_log=args.color_log,
             sharey=args.share_y,
         )
         filenames += these_filenames
@@ -660,13 +661,19 @@ def main() -> None:
         default=False,
         help='Make x-axis a log scale.'
     )
+    color_log = CLIOption(
+        '--color-log',
+        action='store_true', 
+        default=False,
+        help='Make numeric color values a log scale.'
+    )
     share_y = CLIOption(
         '--share-y',
         action='store_true', 
         default=False,
         help='Make y-axis the same range on every panel.'
     )
-    plot_dose_opts = [plot_x, plot_color, plot_control, plot_panel, plot_files, x_log, share_y]
+    plot_dose_opts = [plot_x, plot_color, plot_control, plot_panel, plot_files, x_log, color_log, share_y]
 
     plot_prefix = CLIOption(
         '--plot', '-t', 

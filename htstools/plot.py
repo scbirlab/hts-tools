@@ -7,10 +7,11 @@ from carabiner.mpl import add_legend, colorblind_palette, grid
 import pandas as pd
 from pandas import DataFrame
 import matplotlib.pyplot as plt
-from matplotlib import axes, figure
+from matplotlib import axes, colormaps, figure
 from matplotlib.container import ErrorbarContainer
 from matplotlib.collections import PathCollection
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, Normalize
+from matplotlib.cm import ScalarMappable
 import numpy as np
 from scipy import stats
 
@@ -117,7 +118,9 @@ def plot_dose_response(
     sharey: bool = False,
     sharex: bool = False,
     x_log: bool = False,
-    y_log: bool = False
+    y_log: bool = False,
+    color_log: bool = False, 
+    cmap: str = "cividis"
 ) -> List[str]:
 
     """Plot dose response curves, optionally splitting data across files, facets and colors.
@@ -156,6 +159,10 @@ def plot_dose_response(
         Whether to make x-axis log scale. Default: False.
     y_log : bool, optional
         Whether to make y-axis log scale. Default: False.
+    color_log: bool, optional
+        Whether to plot numeric colors on log scale. Default: False.
+    cmap: str, optional
+        Which matplotlib colormap to use. Default: "cividis".
 
     Returns
     -------
@@ -184,6 +191,8 @@ def plot_dose_response(
     n_facet_rows = int(np.ceil(np.sqrt(n_facets)))
     n_facet_cols = int(np.ceil(n_facets / n_facet_rows))
 
+    colors_are_numeric = (color in data.select_dtypes(include=np.number))
+
     assert (n_facet_cols * n_facet_rows) >= n_facets, f"{n_facets} != {n_facet_rows} x {n_facet_cols}"
 
     for file_name, file_data in (
@@ -197,12 +206,25 @@ def plot_dose_response(
         fig, _ = grid(
             nrow=n_facet_rows, 
             ncol=n_facet_cols, 
-            aspect_ratio=1.1,
+            aspect_ratio=1.2,
             sharey=sharey,
             sharex=sharex,
         )
 
         for ax, (facet_name, facet_data) in zip(fig.axes, file_data.groupby(facet)):
+            if colors_are_numeric:
+                _min, _max = facet_data[color].min(), facet_data[color].max()
+                if color_log:
+                    norm_fn = LogNorm
+                    if _min == 0.:
+                        _min += 1
+                else:
+                    norm_fn = Normalize
+                if _max == _min:
+                    _max += 1
+                norm = norm_fn(vmin=_min, vmax=_max)
+                scalar_mappable = ScalarMappable(norm=norm, cmap=cmap)
+                convert_to_color = lambda x: colormaps[cmap](norm(x))
             ax.set(
                 title=facet_name if facet_name != DEFAULT else '',
                 xlabel=x, 
@@ -217,8 +239,11 @@ def plot_dose_response(
             if (
                 color_control is not None and 
                 color_control in facet_data[color].values
-            ):
-                control_data = facet_data.query(f'{color} == "{color_control}"')
+            ):  
+                if colors_are_numeric:
+                    control_data = facet_data.query(f'{color} == {color_control}')
+                else:
+                    control_data = facet_data.query(f'{color} == "{color_control}"')
                 _plot_mean_and_scatter(
                     ax, 
                     control_data, 
@@ -229,21 +254,32 @@ def plot_dose_response(
                     capsize=capsize, 
                     zorder=5,
                 )
-
             for i, (color_name, color_data) in enumerate(facet_data.groupby(color)):
+                if colors_are_numeric:
+                    color_args = dict(
+                        color=convert_to_color(color_name), 
+                    )
+                else:
+                    color_args = dict(
+                        color=f"C{i}" if color_name != DEFAULT else "C1", 
+                        label = color_name if color_name != DEFAULT else '',
+                    )
                 if color_name != color_control:
-                    _plot_mean_and_scatter(
+                    ax, sc, err = _plot_mean_and_scatter(
                         ax, 
                         color_data, 
                         x, 
                         y, 
-                        color=f"C{i}" if color_name != DEFAULT else "C1",
                         s=markersize, 
                         capsize=capsize,
-                        label=color_name if color_name != DEFAULT else '',
+                        **color_args
                     )
 
-        add_legend(ax)
+            if colors_are_numeric:
+                fig.colorbar(scalar_mappable, ax=ax)
+
+        if not colors_are_numeric:
+            add_legend(ax)
         fig.savefig(
             filename, 
             dpi=300 if format.lower() == 'png' else 'figure',
