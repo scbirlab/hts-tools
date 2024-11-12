@@ -510,7 +510,7 @@ def plot_histogram(
                 axes = row[0], row[2]
                 title = 'Controls'
             else:
-                q = f'{control_col} not in ["{'", "'.join(plot_layers[:-1])}"]'
+                q = f'{control_col} not in ["' + ", ".join(plot_layers[:-1]) + '"]'
                 axes = row[1], row[3]
                 title = 'Experiment'
             
