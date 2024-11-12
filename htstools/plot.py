@@ -606,7 +606,7 @@ def plot_replicates(
                 if control is not None:
                     q = f'{control_col} == "{control}"'
                 else:
-                    q = f'{control_col} not in ["{'", "'.join(plot_layers[:-1])}"]'
+                    q = f'{control_col} not in ["' + ", ".join(plot_layers[:-1]) + '"]'
                 this_data = df_wide.query(q)
                 ax.scatter(
                     'rep_1', 'rep_2', 
