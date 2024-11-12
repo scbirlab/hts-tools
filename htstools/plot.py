@@ -20,7 +20,7 @@ PlotTuple = Tuple[axes.Axes, figure.Figure]
 _DARK_GREY = "dimgrey"
 _LIGHT_GREY = "lightgrey"
 _MARKER_SIZE = 3.
-_PANEL_SIZE = 2.5
+_PANEL_SIZE = 2.25
 
 def _plot_errbars(
     ax: axes.Axes,
@@ -98,7 +98,7 @@ def _plot_mean_and_scatter(
         color=color, 
         s=s * 3., 
         zorder=zorder,
-        label='_default'
+        label='_default',
     )
     return ax, scatter, errbars
     
@@ -212,6 +212,8 @@ def plot_dose_response(
         )
 
         for ax, (facet_name, facet_data) in zip(fig.axes, file_data.groupby(facet)):
+            if y_log:
+                facet_data = facet_data[facet_data[y] > 0.]
             if colors_are_numeric:
                 _min, _max = facet_data[color].min(), facet_data[color].max()
                 if color_log:
@@ -234,7 +236,13 @@ def plot_dose_response(
             )
 
             for i in hlines:
-                ax.axhline(i, c=_LIGHT_GREY, zorder=-5)
+                if y_log and i == 0:
+                    continue
+                else:
+                    ax.axhline(i, c=_LIGHT_GREY, zorder=-5)
+
+            if y_log and not sharey:
+                ax.set_ylim(.9 * facet_data[y].min(), 1.1 * facet_data[y].max())
 
             if (
                 color_control is not None and 
@@ -469,7 +477,7 @@ def plot_histogram(
     x: str,
     control_col: str,
     negative: str,
-    positive: str,
+    positive: Optional[str] = None,
     panel_size: float = _PANEL_SIZE
 ) -> PlotTuple:
     
@@ -490,14 +498,19 @@ def plot_histogram(
         squeeze=False,
     )
 
+    if positive is not None:
+        plot_layers = (positive, negative, None)
+    else:
+        plot_layers = (negative, None)
+
     for row, (wv, wv_df) in zip(axes, data.groupby(read_type)):
-        for i, control in enumerate((positive, negative, None)):
+        for i, control in enumerate(plot_layers):
             if control is not None:
                 q = f'{control_col} == "{control}"'
                 axes = row[0], row[2]
                 title = 'Controls'
             else:
-                q = f'{control_col} not in ["{negative}", "{positive}"]'
+                q = f'{control_col} not in ["{'", "'.join(plot_layers[:-1])}"]'
                 axes = row[1], row[3]
                 title = 'Experiment'
             
@@ -544,7 +557,7 @@ def plot_replicates(
     grouping: Union[str, Iterable[str]],
     control_col: str,
     negative: str,
-    positive: str,
+    positive: Optional[str] = None,
     panel_size: float = _PANEL_SIZE
 ) -> PlotTuple:
 
@@ -558,6 +571,11 @@ def plot_replicates(
     do_log = True #n_gt_zero > .5
     n_cols = 2 if do_log else 1
     n_rows = n_read_types
+
+    if positive is not None:
+        plot_layers = (positive, negative, None)
+    else:
+        plot_layers = (negative, None)
     
     fig, axes = grid(
         nrow=n_rows, 
@@ -584,11 +602,11 @@ def plot_replicates(
         )[0, -1]
 
         for ax in row:
-            for i, control in enumerate((positive, negative, None)):
+            for i, control in enumerate(plot_layers):
                 if control is not None:
                     q = f'{control_col} == "{control}"'
                 else:
-                    q = f'{control_col} not in ["{negative}", "{positive}"]'
+                    q = f'{control_col} not in ["{'", "'.join(plot_layers[:-1])}"]'
                 this_data = df_wide.query(q)
                 ax.scatter(
                     'rep_1', 'rep_2', 
