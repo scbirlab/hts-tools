@@ -1,43 +1,43 @@
 """Command-line interface for hts-tools."""
 
-from typing import Callable, Dict, Iterable, IO, List, Mapping, TextIO, Tuple, Union
-from argparse import FileType, Namespace
-from functools import partial, reduce
-from io import TextIOWrapper
 import os
-from re import compile, search
 import sys
+from argparse import FileType, Namespace
+from collections.abc import Callable, Iterable, Mapping
+from functools import partial, reduce
+from re import compile, search
 
+import matplotlib.pyplot as plt
 from carabiner import (
-    cast,
-    clicommand, 
-    CLIApp, 
+    CLIApp,
     CLICommand,
     CLIOption,
+    cast,
+    clicommand,
     print_err,
 )
 from carabiner.mpl import figsaver
 from carabiner.pd import get_formats, read_table, write_stream
 from matplotlib.figure import Figure
-from pandas import concat, merge, DataFrame
+from pandas import DataFrame, concat, merge
 
 from . import __version__
 from .io import from_platereader
-from .tables import join, pivot_plate, replicate_table
 from .normalize import normalize
 from .plot import (
     plot_dose_response,
-    plot_mean_sd, 
+    plot_heatmap,
+    plot_histogram,
+    plot_mean_sd,
+    plot_replicates,
+    plot_scatter,
     plot_zprime,
-    plot_replicates, 
-    plot_heatmap, 
-    plot_histogram, 
-    plot_scatter, 
-    PlotTuple,
 )
-from .qc import z_prime_factor, ssmd
+from .qc import ssmd, z_prime_factor
 from .summarize import summarize
-    
+from .tables import join, pivot_plate, replicate_table
+
+
 def _save_plot(
     fig: Figure,
     prefix: str, 
@@ -51,7 +51,47 @@ def _save_plot(
         prefix=f"{prefix}_{column}_", 
         format=format,
     )(fig, name=suffix)
+    plt.close(fig)  # avoid accumulating open figures
     return filename
+
+
+def _merge_on(frames: Iterable[DataFrame], on: list[str]) -> DataFrame:
+    """Outer-merge tables on the grouping columns only.
+
+    Merging on every shared column (the pandas default) also joins on float 
+    columns such as means, which is fragile. Instead, each table must have 
+    at most one row per grouping key, and columns shared between tables 
+    (e.g. wavelength annotations) are combined, raising an error if their 
+    non-missing values conflict.
+    
+    """
+    def _merge(left: DataFrame, right: DataFrame) -> DataFrame:
+        for name, table in (('left', left), ('right', right)):
+            if table.duplicated(on).any():
+                raise ValueError(
+                    f"The grouping columns {on} do not uniquely identify rows in the "
+                    f"{name} table, so tables cannot be merged without duplicating rows."
+                )
+        shared = [str(c) for c in right if c in left and c not in on]
+        merged = merge(
+            left, 
+            right, 
+            on=on, 
+            how='outer', 
+            suffixes=('', '__right'),
+            validate='one_to_one',
+        )
+        for c in shared:
+            other = merged.pop(c + '__right')
+            conflicts = merged[c].notna() & other.notna() & (merged[c] != other)
+            if conflicts.any():
+                raise ValueError(
+                    f"Column '{c}' has conflicting values between tables for "
+                    f"{int(conflicts.sum())} group(s)."
+                )
+            merged[c] = merged[c].fillna(other)
+        return merged
+    return reduce(_merge, frames)
 
 
 def _subset_cols(
@@ -59,14 +99,15 @@ def _subset_cols(
     starts: str = '', 
     ends: str = '',
     logic: str = 'OR'
-) -> List[str]:
-    starts, ends = compile('^' + starts), compile(ends + '$')
+) -> list[str]:
+    starts_re, ends_re = compile('^' + starts), compile(ends + '$')
+    columns = [str(c) for c in data.columns]
     if logic.upper() == 'OR':
-        return [c for c in data.columns 
-                if search(ends, c) or search(starts, c)]
+        return [c for c in columns 
+                if search(ends_re, c) or search(starts_re, c)]
     elif logic.upper() == 'AND':
-        return [c for c in data.columns 
-                if search(ends, c) and search(starts, c)]
+        return [c for c in columns 
+                if search(ends_re, c) and search(starts_re, c)]
     else:
         raise NotImplementedError(f"{logic=} not implemented")
 
@@ -96,8 +137,9 @@ def _join(args: Namespace) -> None:
         how=args.join_type,
     )
     
-    if isinstance(shared_cols[0], tuple):
-        shared_cols = ('-'.join(cols) for cols in shared_cols)
+    shared_names = [
+        '-'.join(cols) if isinstance(cols, tuple) else cols for cols in shared_cols
+    ]
 
     if isinstance(right, Mapping):
         right_shape = '; '.join(str(r.shape[0]) for r in right.values())
@@ -105,7 +147,7 @@ def _join(args: Namespace) -> None:
         right_shape = right.shape[0]
 
     print_err(f"""Processed {args.input.name} <-> {args.right.name}
-                   Overlapping columns: {', '.join(shared_cols)}
+                   Overlapping columns: {', '.join(shared_names)}
                    Number of rows:
                         at start: {left.shape[0]} <-> {right_shape}
                         at end: {joined_data.shape[0]}""")
@@ -118,11 +160,11 @@ def _join(args: Namespace) -> None:
 def _col_renamer(
     data: DataFrame,
     mcol: str,
-    rep: Iterable[str],
-) -> Dict[str, str]:
+    rep: tuple[str, str],
+) -> dict[str, str]:
     return {
-        col: col.replace(*rep) for col in data.columns 
-        if col.startswith(mcol) and col != mcol
+        str(col): str(col).replace(*rep) for col in data.columns 
+        if str(col).startswith(mcol + '_')
     }
 
 
@@ -209,7 +251,6 @@ def _pivot(args: Namespace) -> None:
 @clicommand(message='Performing QC with the following parameters')
 def _qc(args: Namespace) -> None:
 
-    import pandas as pd
 
     data = read_table(args.input, args.format)
     measurement_cols = _subset_cols(
@@ -218,7 +259,7 @@ def _qc(args: Namespace) -> None:
         ends=r'norm\..{3}',
     )
 
-    z_data = []
+    z_tables: list[DataFrame] = []
     for measurement_col in measurement_cols:
         for f in (z_prime_factor, ssmd):
             z = f(data, 
@@ -226,7 +267,8 @@ def _qc(args: Namespace) -> None:
                   control_col=args.control,
                   pos=args.positive,
                   neg=args.negative, 
-                  group=args.grouping)
+                  group=args.grouping,
+                  allow_mixed_wavelengths=args.allow_mixed_wavelengths)
             z = z.rename(
                 columns=_col_renamer(
                     z, 
@@ -234,12 +276,9 @@ def _qc(args: Namespace) -> None:
                     (args.measurement_prefix, 'calc_'),
                 )
             )
-            z_data.append(z)
+            z_tables.append(z)
 
-    z_data = reduce(
-        partial(merge, how='outer'), 
-        z_data,
-    )
+    z_data = _merge_on(z_tables, args.grouping)
     
     print_err(
         f"""Processed {args.input.name}
@@ -293,7 +332,7 @@ def _summarize(args: Namespace) -> None:
         ends=r'norm\..{3}',
     )
     
-    summaries = []
+    summary_tables: list[DataFrame] = []
 
     for measurement_col in measurement_cols:
 
@@ -303,6 +342,7 @@ def _summarize(args: Namespace) -> None:
             control_col=args.control,
             neg=args.negative, 
             group=args.grouping,
+            allow_mixed_wavelengths=args.allow_mixed_wavelengths,
         )
         z = z.rename(
             columns=_col_renamer(
@@ -311,12 +351,9 @@ def _summarize(args: Namespace) -> None:
                 (args.measurement_prefix, 'calc_'),
             )
         )
-        summaries.append(z)
+        summary_tables.append(z)
 
-    summaries = reduce(
-        partial(merge, how='outer'), 
-        summaries,
-    )
+    summaries = _merge_on(summary_tables, args.grouping)
     
     print_err(
         f"""Processed {args.input.name}
@@ -335,9 +372,9 @@ def _summarize(args: Namespace) -> None:
             '_'.join(col.split('_')[:-1]) for col in measurements
         ])
         normalized = set(['_'.join(col.split('_')[:-1]) 
-                          for col in summaries 
-                          if col.__contains__('_norm.') and 
-                          any(col.__contains__(channel) for channel in channels)])
+                          for col in map(str, summaries.columns) 
+                          if '_norm.' in col and 
+                          any(channel in col for channel in channels)])
         col_groups = tuple(channels | normalized)
 
         for c in col_groups:
@@ -448,7 +485,7 @@ def _plot_dose(args: Namespace) -> None:
     return None
 
 
-@clicommand(message=f'Plotting replicates with the following parameters')
+@clicommand(message='Plotting replicates with the following parameters')
 def _plot_rep(args: Namespace) -> None:
     
     _plot_columns(
@@ -461,12 +498,12 @@ def _plot_rep(args: Namespace) -> None:
             negative=args.negative,
             positive=args.positive,
         ),
-        partial(replicate_table, group=args.grouping)
+        partial(replicate_table, group=args.grouping, seed=args.seed)
     )
     return None
 
 
-@clicommand(message=f'Plotting heatmaps with the following parameters')
+@clicommand(message='Plotting heatmaps with the following parameters')
 def _plot_hm(args: Namespace) -> None:
     _plot_columns(
         args, 
@@ -480,7 +517,7 @@ def _plot_hm(args: Namespace) -> None:
     return None
 
 
-@clicommand(message=f'Plotting histograms with the following parameters')
+@clicommand(message='Plotting histograms with the following parameters')
 def _plot_hist(args: Namespace) -> None:
 
     _plot_columns(
@@ -615,6 +652,14 @@ def main() -> None:
         help='Negative control value.',
     )
     ctrl_opts = [control, pos_val, neg_val]
+    # Positive controls are optional where they are not used in the calculation
+    pos_val_optional = CLIOption(
+        '--positive', '-p', 
+        type=str,
+        default=None,
+        help='Positive control value. Optional, unless using NPG normalization.',
+    )
+    ctrl_opts_pos_optional = [control, pos_val_optional, neg_val]
 
     grouping = CLIOption(
         '--grouping', '-g', 
@@ -622,7 +667,19 @@ def main() -> None:
         nargs='*',
         required=True,
         help='Column heading(s) indicating the data groups '
-             'within which to process measurements.',
+             'within which to process measurements. Rows with missing '
+             'values in these columns are treated as one group.',
+    )
+    allow_mixed_wavelengths = CLIOption(
+        '--allow-mixed-wavelengths',
+        action='store_true',
+        default=False,
+        help='Allow the wavelength of a measurement to vary within a group, or '
+             'between data and the controls they are compared to. By default this '
+             'is an error, because statistics would pool or compare different '
+             'wavelengths. Only appropriate for unitless, separately normalized values '
+             '(not raw measurements); a warning is issued when it takes effect. '
+             'Not available for `normalize`, which always requires a constant wavelength.',
     )
     plot_x = CLIOption(
         '--x', '-x', 
@@ -640,7 +697,7 @@ def main() -> None:
         '--control', '-l', 
         type=str, 
         default=None,
-        help='Column to use for plot color.',
+        help='Value in the color column to plot as a dark grey control.',
     )
     plot_panel = CLIOption(
         '--panel', '-p', 
@@ -689,6 +746,13 @@ def main() -> None:
         help='Save plot with this prefix.',
     )
     plot_opts = [plot_format, plot_output_name]
+    seed = CLIOption(
+        '--seed', 
+        type=int,
+        default=42,
+        help='Random seed for assigning replicate labels, for reproducible plots. '
+             'Default: 42.',
+    )
 
     parse = CLICommand(
         "parse",
@@ -721,13 +785,13 @@ def main() -> None:
         Normalize data according to grouped 
         positive and negative controls.
         """,
-        options=std_io + [norm_method, measurement_prefix, grouping] + ctrl_opts,
+        options=std_io + [norm_method, measurement_prefix, grouping] + ctrl_opts_pos_optional,
         main=_normalize,
     )
     summarize = CLICommand(
         "summarize",
         description="""Generate summary statistics.""",
-        options=std_io + [measurement_prefix, grouping] + ctrl_opts + [plot_prefix, plot_format],
+        options=std_io + [measurement_prefix, grouping, allow_mixed_wavelengths] + ctrl_opts_pos_optional + [plot_prefix, plot_format],
         main=_summarize,
     )
     qc = CLICommand(
@@ -736,7 +800,7 @@ def main() -> None:
         Run quality control checks based on 
         positive and negative controls.
         """,
-        options=std_io + [measurement_prefix, grouping] + ctrl_opts + [plot_prefix, plot_format],
+        options=std_io + [measurement_prefix, grouping, allow_mixed_wavelengths] + ctrl_opts + [plot_prefix, plot_format],
         main=_qc,
     )
     plot_dose = CLICommand(
@@ -760,7 +824,7 @@ def main() -> None:
     plot_rep = CLICommand(
         "plot-rep",
         description="""Generate replicate correlation plots.""",
-        options=[std_input, measurement_prefix, grouping, formatting] + ctrl_opts + plot_opts,
+        options=[std_input, measurement_prefix, grouping, formatting] + ctrl_opts + [seed] + plot_opts,
         main=_plot_rep,
     )
     plot_hist = CLICommand(

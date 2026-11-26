@@ -1,12 +1,15 @@
 """Functions for normalizing data."""
 
-from typing import Iterable, List, Optional, Union
+from collections.abc import Iterable
 from functools import partial
 
-from carabiner import print_err
 import pandas as pd
+from carabiner import print_err
 
-def _unique_entries_str(x: pd.DataFrame) -> str:
+from .utils import as_list, check_constant_within_groups
+
+
+def _unique_entries_str(x: pd.Series) -> str:
     return ','.join(sorted(map(str, x.unique())))
 
 
@@ -22,7 +25,7 @@ def _check_controls(
             raise ValueError(f"{value=} is not in data:\n\t" +
                             _unique_entries_str(data[control_col]))
         except TypeError:
-            raise TypeError(f"{control_col=} is not a str column.")
+            raise TypeError(f"{control_col=} is not a str column.") from None
 
     return None
 
@@ -32,13 +35,17 @@ def _get_grouped_control_means(
     measurement_col: str,
     control_col: str,
     neg: str,
-    pos: Optional[str] = None,
-    group: Optional[Union[str, Iterable[str]]] = None
-) -> pd.DataFrame:
+    pos: str | None = None,
+    group: str | Iterable[str] | None = None,
+) -> tuple[dict[str, str], pd.DataFrame]:
 
+    group_is_dummy = group is None
     if group is None:
-        group = '__group__'
-        data = data.assign(**{group: group})
+        group_cols = ['__group__']
+        data = data.assign(**{group_cols[0]: group_cols[0]})
+    else:
+        group_cols = as_list(group)
+    group = group_cols
     if measurement_col not in data:
         raise KeyError(
             f"{measurement_col=} is not in data:\n\t{','.join(data.columns.tolist())}"
@@ -51,6 +58,13 @@ def _get_grouped_control_means(
     mean_control_column_names = {
         control: measurement_col + s + '_mean' for control, s in zip(control_values, ('_neg', '_pos'))
     }
+
+    check_constant_within_groups(
+        data, 
+        None if group_is_dummy else group,
+        '_'.join(measurement_col.split('_')[1:3]) + '_wavelength',
+        'wavelength column',
+    )
 
     control_checker = partial(
         _check_controls,
@@ -65,17 +79,23 @@ def _get_grouped_control_means(
 
     for control, value in control_values.items():
         name = mean_control_column_names[control]
-        control = (
-            data
-            .query(f'{control_col} == "{value}"')
-            .groupby(group)[[measurement_col]]
+        control_means = (
+            data[data[control_col] == value]
+            .groupby(group, dropna=False)[[measurement_col]]
             .mean()
-            .reset_index(names=group)
+            .reset_index()
             .rename(columns={measurement_col: name})
         )
-        data = pd.merge(data, control, how='outer')
+        # left join on the groups only, so original row order is kept and stale columns 
+        # from a previous run are replaced rather than silently used as join keys
+        data = pd.merge(
+            data.drop(columns=[name], errors='ignore'), 
+            control_means, 
+            how='left', 
+            on=group,
+        )
 
-    if group == '__group__':
+    if group_is_dummy:
         data = data.drop(columns=group)
     return mean_control_column_names, data
 
@@ -83,15 +103,17 @@ def _get_grouped_control_means(
 def _normalize_pon(data: pd.DataFrame, 
                    measurement_col: str,
                    neg_mean: str,
-                   pos_mean: Union[str, None] = None,
+                   pos_mean: str | None = None,
                    flip: bool = False) -> pd.DataFrame:
 
     norm_colname = measurement_col + '_norm.pon'
     
+    # a zero negative-control mean makes the ratio undefined: NaN rather than inf
+    denominator = data[neg_mean].where(data[neg_mean] != 0)
     if flip:
-        data[norm_colname] = 1. - (data[measurement_col] / data[neg_mean])
+        data[norm_colname] = 1. - (data[measurement_col] / denominator)
     else:
-        data[norm_colname] = data[measurement_col] / data[neg_mean]
+        data[norm_colname] = data[measurement_col] / denominator
 
     return data
 
@@ -104,12 +126,12 @@ def _normalize_npg(data: pd.DataFrame,
 
     norm_colname = measurement_col + '_norm.npg'
     
+    # identical control means make the range zero: NaN rather than inf
+    control_range = (data[neg_mean] - data[pos_mean]).where(data[neg_mean] != data[pos_mean])
     if flip:
-        data[norm_colname] = ((data[measurement_col] - data[neg_mean]) / 
-                              (data[pos_mean] - data[neg_mean]))
+        data[norm_colname] = (data[measurement_col] - data[neg_mean]) / -control_range
     else:
-        data[norm_colname] = ((data[measurement_col] - data[pos_mean]) / 
-                              (data[neg_mean] - data[pos_mean]))
+        data[norm_colname] = (data[measurement_col] - data[pos_mean]) / control_range
 
     return data
 
@@ -121,9 +143,9 @@ def normalize(data: pd.DataFrame,
               measurement_col: str,
               control_col: str,
               neg: str,
-              method: Union[str, None] = None,
-              pos: Union[str, None] = None,
-              group: Union[str, List[str], None] = None,
+              method: str | None = None,
+              pos: str | None = None,
+              group: str | list[str] | None = None,
               flip: bool = False) -> pd.DataFrame:
     
     r"""Normalize a column based on controls, optionally within groups.
@@ -250,8 +272,8 @@ def normalize(data: pd.DataFrame,
     
     try:
         normalization_function = _NORMALIZATION_METHODS[method]
-    except KeyError as e:
-        raise AttributeError(f"Normalization method {method} is not supported.")
+    except KeyError:
+        raise AttributeError(f"Normalization method {method} is not supported.") from None
     
     if method == 'npg' and pos is None:
         raise AttributeError(f"Normalization method {method} requires positive controls.")
@@ -264,6 +286,21 @@ def normalize(data: pd.DataFrame,
         pos=pos,
         group=group,
     )
+
+    if method == 'pon':
+        n_zero_neg = int((data[control_mean_names['neg_mean']] == 0).sum())
+        if n_zero_neg > 0:
+            print_err(
+                f"WARNING: {n_zero_neg} row(s) of {measurement_col} have a negative control mean "
+                "of 0, so PON values there are NaN."
+            )
+    else:
+        n_same = int((data[control_mean_names['neg_mean']] == data[control_mean_names['pos_mean']]).sum())
+        if n_same > 0:
+            print_err(
+                f"WARNING: {n_same} row(s) of {measurement_col} have identical positive and "
+                "negative control means, so NPG values there are NaN."
+            )
 
     return normalization_function(
         data=data, 

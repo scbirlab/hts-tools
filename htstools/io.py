@@ -1,20 +1,21 @@
 """Utilities for reading files from platereaders and writing columnar data."""
 
-from typing import Dict, IO, Iterable, List, Optional, TextIO, Tuple, Union
-from collections import defaultdict, namedtuple
 import csv
+import os
+from collections import defaultdict, namedtuple
+from collections.abc import Iterable
 from datetime import datetime
 from functools import partial
-from io import StringIO, TextIOBase, TextIOWrapper
+from io import StringIO, TextIOWrapper
 from itertools import dropwhile
-import os
 from string import ascii_uppercase
+from typing import IO, Any
 
-from carabiner import cast, print_err
+import numpy as np
+import pandas as pd
+from carabiner import cast
 from carabiner.pd import sniff
 from openpyxl import load_workbook
-import pandas as pd
-import numpy as np
 
 from .utils import row_col_to_well
 
@@ -23,13 +24,14 @@ _FORMAT = ('\t', ',', 'xlsx')
 BiotekData = namedtuple(
     'BiotekData',
     ('Meta', 'Procedure_Details', 'Layout', 'Results'),
-    defaults=[None for _ in range(4)],
+    defaults=(None, None, None, None),
 )
 
-def _get_sheet_values(sheet) -> List[str]:
+def _get_sheet_values(sheet) -> list[list[Any]]:
     s = []
     for row in sheet: 
-        values = [r.value or '' for r in row]
+        # only None means an empty cell: 0 and 0.0 are real values
+        values = ['' if r.value is None else r.value for r in row]
         values = [r.isoformat() if isinstance(r, datetime) 
                   else r 
                   for r in values]
@@ -37,7 +39,7 @@ def _get_sheet_values(sheet) -> List[str]:
     return s
 
 
-def _read_xlsx(file: TextIOWrapper) -> Dict[str, List[str]]:
+def _read_xlsx(file: TextIOWrapper) -> dict[str, list[list[Any]]]:
     basename = os.path.basename(file.name)
     return {
         f'xlsx:{basename}:{sheet.title}': _get_sheet_values(sheet) 
@@ -47,13 +49,12 @@ def _read_xlsx(file: TextIOWrapper) -> Dict[str, List[str]]:
 
 def _read_delim(
     file: TextIOWrapper, 
-    delimiter: str = None
-) -> Dict[str, Iterable[Iterable]]:
+    delimiter: Any = None
+) -> dict[str, Iterable[Iterable]]:
     basename = os.path.basename(file.name)
-    delimiter = sniff(file, default=delimiter)
-    if delimiter is not None:
-        delimiter = delimiter.in_delim
-    return {f'delim:{basename}:': csv.reader(file, delimiter=delimiter)}
+    sniffed: Any = sniff(file, default=delimiter)
+    in_delim = sniffed.in_delim if sniffed is not None else ','
+    return {f'delim:{basename}:': csv.reader(file, delimiter=in_delim)}
 
 
 def _biotek_extract(x: Iterable) -> BiotekData:
@@ -72,6 +73,8 @@ def _biotek_extract(x: Iterable) -> BiotekData:
         except IndexError:
             continue
         else:
+            if not isinstance(row0, str):  # numeric cells in XLSX
+                row0 = ''
             row0esc = row0.replace(' ', '_')  # to escape spaces
         
         all_none = all(len(str(item)) == 0 for item in row)
@@ -174,7 +177,7 @@ def _parse_read_name(
     read_name: str, 
     abs_count: int = 0, 
     fluor_count: int = 0
-) -> Tuple[str, str, int, int]:
+) -> tuple[str, str, int, int]:
     
     wavelengths = read_name.split(':')[-1].split(',')
 
@@ -186,6 +189,11 @@ def _parse_read_name(
         fluor_count += 1
         wv = f'ex:{wavelengths[0]}nm;em:{wavelengths[1]}nm'
         read_type = f'fluor_ch{fluor_count}'
+    else:
+        raise ValueError(
+            f'Could not parse read name "{read_name}": expected 1 (absorbance) '
+            f'or 2 (fluorescence) wavelengths, found {len(wavelengths)}.'
+        )
 
     return read_type, wv, abs_count, fluor_count
 
@@ -195,9 +203,11 @@ def _biotek_plate(
     filename: str,
     measurement_prefix: str = 'measured_',
     overflow_value: str = "OVRFLW"
-) -> Tuple[pd.DataFrame, Dict[str, set]]:
+) -> tuple[pd.DataFrame, dict[str, set]]:
     
-    df, read_types = defaultdict(list), defaultdict(set)
+    columns_data: defaultdict[str, list] = defaultdict(list)
+    read_types: defaultdict[str, set] = defaultdict(set)
+    df = columns_data  # filled below, then converted to a DataFrame
 
     row_ids = [subsection for subsection in data.Results if subsection != 'main']
     columns = [col for col in data.Results['main'][0] if col != '']
@@ -228,21 +238,22 @@ def _biotek_plate(
             f"ERROR: Not all columns are the same length: {col_lengths}"
         )
     
-    df = pd.DataFrame(df)
-    for col in df:
-        if col.startswith(measurement_prefix):
+    table = pd.DataFrame(columns_data)
+    for col in table.columns:
+        if str(col).startswith(measurement_prefix):
             # replace Biotek "OVRFLW" with NaN
-            df[col] = np.where(df[col] == overflow_value, np.nan, df[col]).astype(float)
-    df = _biotek_common(df, data, filename)
+            table[col] = np.where(table[col] == overflow_value, np.nan, table[col]).astype(float)
+    table = _biotek_common(table, data, filename)
 
-    return df, read_types
+    return table, read_types
 
 
 def _biotek_row(
     data: BiotekData,
     filename: str,
-    measurement_prefix: str = 'measured_'
-) -> Tuple[pd.DataFrame, Dict[str, set]]:
+    measurement_prefix: str = 'measured_',
+    overflow_value: str = "OVRFLW"
+) -> tuple[pd.DataFrame, dict[str, set]]:
     
     read_types = defaultdict(set)
 
@@ -268,9 +279,9 @@ def _biotek_row(
     )
 
     abs_count, fluor_count = 0, 0
-    cols_to_drop = [col for col in df if col.startswith('Unnamed')]
+    cols_to_drop = [col for col in map(str, df.columns) if col.startswith('Unnamed')]
     
-    for header in df:
+    for header in map(str, df.columns):
 
         if not header.startswith('Unnamed') and ':' in header:  # this is a data column
 
@@ -282,7 +293,10 @@ def _biotek_row(
             )
 
             read_types[read_type].add(wv)
-            df[measurement_prefix + read_type] = df[header].copy()
+            # replace Biotek "OVRFLW" with NaN, as for plate-shaped data
+            df[measurement_prefix + read_type] = (
+                df[header].replace(overflow_value, np.nan).astype(float)
+            )
             df[read_type + '_wavelength'] = wv
             cols_to_drop.append(header)
 
@@ -293,22 +307,23 @@ def _biotek_row(
 
 
 def _from_platereader(
-    file: Union[IO, str],
+    file: IO | str,
     shape: str,
     vendor: str,
-    delimiter: Optional[str] = None,
+    delimiter: str | None = None,
     measurement_prefix: str = 'measured_'
 ) -> dict:
 
-    delimiter = sniff(file, default=delimiter)
+    sniffed: Any = sniff(file, default=delimiter)
     filename = cast(file, to=str)
-    file = cast(file, to=TextIOWrapper)
-    if delimiter.in_delim == 'xlsx':
-        data_handle = _read_xlsx(file)
-    elif delimiter.in_delim in _FORMAT:
-        data_handle = _read_delim(file, delimiter=delimiter)
+    handle: TextIOWrapper = cast(file, to=TextIOWrapper)
+    data_handle: dict[str, Any]
+    if sniffed.in_delim == 'xlsx':
+        data_handle = _read_xlsx(handle)
+    elif sniffed.in_delim in _FORMAT:
+        data_handle = _read_delim(handle, delimiter=sniffed)
     else:
-        raise NotImplementedError(f'File format "{format}" not supported.')
+        raise NotImplementedError(f'File format "{sniffed.in_delim}" not supported.')
     
     if vendor == 'Biotek':
         extracted_data = {
@@ -336,10 +351,10 @@ def _from_platereader(
     )
 
 
-def from_platereader(file: Union[IO, str, Iterable[Union[IO, str]]],
+def from_platereader(file: IO | str | Iterable[IO | str],
                      shape: str,
                      vendor: str,
-                     delimiter: Optional[str] = None,
+                     delimiter: str | None = None,
                      measurement_prefix: str = 'measured_') -> pd.DataFrame:
 
     """Convert raw platereader files to columnar format.
@@ -394,4 +409,4 @@ def from_platereader(file: Union[IO, str, Iterable[Union[IO, str]]],
     
     return pd.concat((
         df for parsed_file in parsed_files for _, (df, _) in parsed_file.items()
-    ), axis=0)
+    ), axis=0, ignore_index=True)

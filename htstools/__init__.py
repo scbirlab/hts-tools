@@ -1,16 +1,17 @@
 from importlib.metadata import version
+
 __version__ = version('hts-tools')
 
 from .io import from_platereader
 from .normalize import normalize
 from .plot import (
     plot_dose_response,
-    plot_mean_sd, 
-    plot_zprime,
-    plot_replicates, 
-    plot_heatmap, 
+    plot_heatmap,
     plot_histogram,
+    plot_mean_sd,
+    plot_replicates,
     plot_scatter,
+    plot_zprime,
 )
 from .qc import ssmd, z_prime_factor
 from .summarize import summarize

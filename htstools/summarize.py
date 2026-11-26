@@ -1,130 +1,123 @@
 """Statistical testing and hit-calling."""
 
-from typing import Callable, Iterable, List, Union
+from collections.abc import Iterable
 from functools import reduce
 
-from carabiner import cast
-import pandas as pd
 import numpy as np
+import pandas as pd
+from carabiner import print_err
 from scipy.stats import mannwhitneyu, ttest_ind
 
+from .utils import as_list, check_constant_within_groups, group_annotation
+
+_STAT_SUFFIXES = (
+    '_mwu.stat', '_mwu.p', 
+    '_t.stat', '_t.p', 
+    '_ssmd', 
+    '_log10fc',
+)
+
+
+def _as_tuple(key) -> tuple:
+    return key if isinstance(key, tuple) else (key, )
+
+
+def _hashable_key(key) -> tuple:
+    """Group key usable in a dict: NaN != NaN, so missing values are replaced by None."""
+    return tuple(None if pd.isna(k) else k for k in _as_tuple(key))
+
+
 def _group_getter(
-    names: Union[str, Iterable[str]], 
+    names: str | Iterable[str], 
     groups: Iterable[str], 
     control: Iterable[str]
-) -> str:
-
-    names = tuple(cast(names, to=list))
-    neg_name = tuple(
-        name for name, group in zip(names, groups) 
+) -> tuple:
+    """Convert the key of a data group into the key of its matching negative control group."""
+    return _hashable_key(tuple(
+        name for name, group in zip(_as_tuple(names), groups) 
         if group not in control
+    ))
+
+
+def _compare_to_negative(
+    this: pd.Series, 
+    neg: pd.Series
+) -> dict[str, float]:
+    """Calculate MWU, Welch's T-test, SSMD, and LFC of `this` relative to `neg`.
+
+    All statistics are NaN if either sample is empty (after dropping NaNs).
+    The log10 fold-change is NaN if either mean is not positive, because it 
+    is undefined there; no sentinel value is substituted.
+
+    """
+    results = dict.fromkeys(_STAT_SUFFIXES, np.nan)
+    this, neg = this.dropna(), neg.dropna()
+    if this.size == 0 or neg.size == 0:
+        return results
+
+    mwu = mannwhitneyu(
+        this,
+        neg,
+        method='auto',
+        alternative='two-sided',
     )
-    # neg_name = neg_name if len(neg_name) > 1 else neg_name[0]
-    return neg_name
+    tt = ttest_ind(
+        this,
+        neg,
+        equal_var=False,
+        alternative='two-sided',
+    )
+    this_mean, neg_mean = this.mean(), neg.mean()
+    results['_mwu.stat'], results['_mwu.p'] = mwu.statistic, mwu.pvalue
+    results['_t.stat'], results['_t.p'] = tt.statistic, tt.pvalue
+    results['_ssmd'] = (this_mean - neg_mean) / np.sqrt(this.var() + neg.var())
+    if this_mean > 0. and neg_mean > 0.:
+        results['_log10fc'] = np.log10(this_mean) - np.log10(neg_mean)
+    return results
 
 
-def _mw_u(negatives: pd.DataFrame, 
-          measurement_col: str,
-          group: list,
-          control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
+def _grouped_comparison(
+    negatives: pd.DataFrame, 
+    measurement_col: str,
+    group: list,
+    control: list
+):
+    """Make a function to apply to each data group, comparing it to its negative controls.
     
-    negs = negatives[measurement_col]
+    Returns the function and a set which is populated with the keys of groups
+    for which there were no matching negative controls.
 
-    def mw_u(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    neg_group = [g for g in group if g not in control]
+    if len(neg_group) > 0:
+        negs = {
+            _hashable_key(key): values[measurement_col] 
+            for key, values in negatives.groupby(neg_group, dropna=False)
+        }
+    else:
+        negs = {tuple(): negatives[measurement_col]}
+    missing = set()
+    no_negs = pd.Series(dtype=float)
+
+    def compare(data: pd.DataFrame) -> pd.Series:
         neg_name = _group_getter(data.name, group, control)
-        mwu = mannwhitneyu(
-            data[measurement_col],
-            negs.get_group(neg_name),
-            method='exact',
-            alternative='two-sided',
-        )
-        df = pd.DataFrame({
-            measurement_col + '_mwu.stat': [mwu.statistic],
-            measurement_col + '_mwu.p': [mwu.pvalue]
+        this_neg = negs.get(neg_name, no_negs)
+        if this_neg.notna().sum() == 0:  # no rows, or only NaNs
+            missing.add(neg_name)
+        stats = _compare_to_negative(data[measurement_col], this_neg)
+        return pd.Series({
+            measurement_col + suffix: stats[suffix] for suffix in _STAT_SUFFIXES
         })
-        return df
     
-    return mw_u
-
-
-def _ttest(negatives: Iterable, 
-           measurement_col: str,
-           group: list,
-           control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
-    
-    negs = negatives[measurement_col]
-
-    def ttest(data: pd.DataFrame) -> pd.DataFrame:
-
-        neg_name = _group_getter(data.name, group, control)
-
-        tt = ttest_ind(data[measurement_col],
-                       negs.get_group(neg_name),
-                       equal_var=False,
-                       alternative='two-sided')
-        
-        df = pd.DataFrame({measurement_col + '_t.stat': [tt.statistic],
-                           measurement_col + '_t.p': [tt.pvalue]})
-
-        return df
-    
-    return ttest
-
-
-def _ssmd(negatives: Iterable, 
-          measurement_col: str,
-          group: list,
-          control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
-    
-    negs = negatives[measurement_col]
-
-    def ssmd(data: pd.DataFrame) -> pd.DataFrame:
-
-        neg_name = _group_getter(data.name, group, control)
-
-        this_neg = negs.get_group(neg_name)
-        this_neg_mean, this_neg_var = this_neg.mean(), this_neg.var()
-        data_mean, data_var = data[measurement_col].mean(), data[measurement_col].var()
-
-        this_ssmd = (data_mean - this_neg_mean) / np.sqrt(data_var + this_neg_var)
-        
-        df = pd.DataFrame({measurement_col + '_ssmd': [this_ssmd]})
-
-        return df
-    
-    return ssmd
-
-
-def _lfc(negatives: Iterable, 
-         measurement_col: str,
-         group: list,
-         control: list) -> Callable[[pd.DataFrame], pd.DataFrame]:
-    
-    negs = negatives[measurement_col]
-
-    def lfc(data: pd.DataFrame) -> pd.DataFrame:
-
-        neg_name = _group_getter(data.name, group, control)
-
-        this_neg = negs.get_group(neg_name)
-        this_neg_mean = this_neg.mean()
-        data_mean = data[measurement_col].mean()
-
-        this_lfc = np.nan_to_num(np.log10(data_mean),
-                                 nan=-15.) - np.log10(this_neg_mean)
-        
-        df = pd.DataFrame({measurement_col + '_log10fc': [this_lfc]})
-
-        return df
-    
-    return lfc
+    return compare, missing
 
 
 def summarize(data: pd.DataFrame, 
               measurement_col: str,
-              neg: Union[List[str], str],
-              control_col: Union[List[str], str],
-              group: Union[List[str], str]) -> pd.DataFrame:
+              neg: list[str] | str,
+              control_col: list[str] | str,
+              group: list[str] | str,
+              allow_mixed_wavelengths: bool = False) -> pd.DataFrame:
 
     """Add summary statstics to dataframe.
 
@@ -150,6 +143,12 @@ def summarize(data: pd.DataFrame,
         control_col.
     control_col : str
         Column(s) from which to take the negative control label(s).
+    allow_mixed_wavelengths : bool, optional
+        By default a ValueError is raised if the wavelength varies within a 
+        group, or within the groups that negative controls are matched on, 
+        because statistics would then pool or compare different wavelengths. 
+        Set to True to allow this (wavelengths are joined with "|" in the 
+        output). Default: False.
 
     Returns
     -------
@@ -198,60 +197,81 @@ def summarize(data: pd.DataFrame,
 
     """
     
-    if not isinstance(control_col, list):
-        control_col = [control_col]
-
-    if not isinstance(neg, list):
-        neg = [neg]
+    control_col = as_list(control_col)
+    neg = as_list(neg)
 
     if not len(neg) == len(control_col):
         raise ValueError("Neg and control_col are different lengths:"
-                         f"\n\t({len(neg)})\t{', '.join(neg)}"
+                         f"\n\t({len(neg)})\t{', '.join(map(str, neg))}"
                          f"\n\t({len(control_col)})\t{', '.join(control_col)}")
     
-    if not isinstance(group, list):
-        group = [group]
+    group = as_list(group)
     
-    query = ' and '.join([f'{c} == "{n}"' 
-                         for c, n in zip(control_col, neg)])
-    
-    neg_group = [g for g in group 
-                 if g not in control_col]
-    neg_controls = (data.query(query)
-                        .groupby(neg_group))
-
     read_type = '_'.join(measurement_col.split('_')[1:3]) + '_wavelength'
 
-    if not read_type in data.columns:
+    if read_type not in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
     
-    read_type_ann = data[group + [read_type]].drop_duplicates()
+    # negatives are matched on the grouping columns other than the control column(s), 
+    # so the wavelength must be constant within those groups for comparisons to be valid
+    neg_group = [g for g in group if g not in control_col]
+    # Treat infinite measurements as missing once, up front, so that descriptive 
+    # and comparative statistics (and missing-control warnings) use the same observations.
+    data = data.assign(**{
+        measurement_col: data[measurement_col].replace([np.inf, -np.inf], np.nan)
+    })
+    check_constant_within_groups(
+        data, 
+        neg_group if len(neg_group) > 0 else None, 
+        read_type, 
+        'wavelength column',
+        allow=allow_mixed_wavelengths,
+    )
+
+    is_neg = reduce(
+        lambda a, b: a & b, 
+        (data[c] == n for c, n in zip(control_col, neg)),
+    )
+    if not is_neg.any():
+        raise ValueError(
+            f"No negative controls found where {control_col} == {neg}."
+        )
+    neg_controls = data[is_neg]
+
+    read_type_ann = group_annotation(data, group, read_type)
     
-    grouped = data.groupby(group)
+    grouped = data.groupby(group, dropna=False)
 
     summaries_to_calculate = ('mean', 'std', 'var', 'count')
-    summaries_str = (key if isinstance(key, str) else key.__name__ 
-                     for key in summaries_to_calculate)
-    renamer = {key:  measurement_col + '_' + key 
-               for key in summaries_str}
-    summary = (grouped[measurement_col]
-                      .agg(summaries_to_calculate)
-                      .reset_index()
-                      .rename(columns=renamer))
-    
-    funcs_to_apply = [summary_function(neg_controls, 
-                                       measurement_col, 
-                                       group, 
-                                       control_col) 
-                      for summary_function in (_mw_u, _ttest, _ssmd, _lfc)]
-    applied = [(grouped[[measurement_col]]
-                       .apply(func)
-                       .reset_index()) 
-                for func in funcs_to_apply]
-    applied = [a.drop(columns=[c for c in a if c.startswith('level_') and c[-1].isdigit()])
-               for a in applied]
+    renamer = {
+        key: measurement_col + '_' + key for key in summaries_to_calculate
+    }
+    summary = (
+        grouped[measurement_col]
+        .agg(list(summaries_to_calculate))
+        .reset_index()
+        .rename(columns=renamer)
+    )
 
-    df = reduce(pd.merge, 
-                (read_type_ann, summary) + tuple(applied))
+    compare, missing = _grouped_comparison(
+        neg_controls, 
+        measurement_col, 
+        group, 
+        control_col,
+    )
+    # one pass over the groups for all four statistics
+    stats = grouped[[measurement_col]].apply(compare).reset_index()
+
+    if len(missing) > 0:
+        print_err(
+            f"WARNING: {len(missing)} group(s) of {measurement_col} have no matching "
+            "negative controls, so their comparison statistics are NaN. "
+            "First few: " + '; '.join(map(str, sorted(missing, key=str)[:5]))
+        )
+
+    df = reduce(
+        lambda left, right: pd.merge(left, right, on=group), 
+        (read_type_ann, summary, stats),
+    )
 
     return df

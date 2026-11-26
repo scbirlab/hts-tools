@@ -47,9 +47,12 @@ hts qc $normfile \
     --plot $OUTDIR/qc-plot \
     > $OUTDIR/qc.tsv
 
+# WT and mutant are read at different wavelengths (different reporters); comparing
+# their normalized (unitless) values is deliberate, so mixed wavelengths are allowed.
 hts summarize $normfile \
     -c strain_name \
     -p RIF -n WT -g strain_name compound_name \
+    --allow-mixed-wavelengths \
     --plot $OUTDIR/summary-counter \
     > $OUTDIR/summary-counter.tsv
 

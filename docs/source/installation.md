@@ -1,5 +1,7 @@
 # Installation
 
+Requires Python 3.10 or newer.
+
 ## The easy way
 
 Install the pre-compiled version from PyPI:
