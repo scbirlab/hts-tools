@@ -34,14 +34,14 @@ def _plot_errbars(
     grouped = data.groupby([x])[[y]]
     
     this_mean = grouped.mean().reset_index()
-    this_sd = grouped.sem().reset_index()
+    this_se = grouped.sem().reset_index()
     ci = stats.norm.interval(ci)[-1]
 
-    y_is_all_nan = np.all(np.isnan(this_sd[y]))
+    y_is_all_nan = np.all(np.isnan(this_se[y]))
     errbar = ax.errorbar(
         this_mean[x], 
         this_mean[y], 
-        yerr=(this_sd[y] * ci) if not y_is_all_nan else 0., 
+        yerr=(this_se[y] * ci) if not y_is_all_nan else 0., 
         fmt='o-', 
         **kwargs
     )
@@ -96,9 +96,9 @@ def _plot_mean_and_scatter(
         x, 
         y, 
         color=color, 
-        s=s * 3., 
+        s=s * 2., 
         zorder=zorder,
-        label='_default',
+        label="_none",
     )
     return ax, scatter, errbars
     
@@ -176,8 +176,13 @@ def plot_dose_response(
     
     DEFAULT = '__default__'
     filenames = []
-    capsize, markersize = 2., _MARKER_SIZE
     data[DEFAULT] = DEFAULT
+    plot_defaults = {
+        "x": x,
+        "y": y,
+        "capsize": 2.,
+        "s": _MARKER_SIZE,
+    }
 
     color = color or DEFAULT
     facet = facet or DEFAULT
@@ -195,18 +200,38 @@ def plot_dose_response(
 
     assert (n_facet_cols * n_facet_rows) >= n_facets, f"{n_facets} != {n_facet_rows} x {n_facet_cols}"
 
+    if colors_are_numeric:
+        _min, _max = data[color].min(), data[color].max()
+        if color_log and _min == 0.:
+            _min += 1
+        if _max == _min:
+            _max += 1
+        norm = (LogNorm if color_log else Normalize)(vmin=_min, vmax=_max)
+        scalar_mappable = ScalarMappable(norm=norm, cmap=cmap)
+        convert_to_color = lambda x: colormaps[cmap](norm(x))
+        color_args = {
+            color_name: {
+                "color": convert_to_color(color_name), 
+            } for color_name in sorted(data[color].unique())
+        }
+    else:
+        color_args = {
+            color_name: {
+                "color": f"C{i}" if color_name != DEFAULT else "C1",
+                "label": color_name if color_name != DEFAULT else "_none",
+            } for i, color_name in enumerate(sorted(data[color].unique()))
+        }
+
     for file_name, file_data in (
         data.sort_values(by=x).groupby(files)
     ):
         if files == DEFAULT:
-            filename = f'{file_prefix}.{format}'
-        else:
-            filename = f'{file_prefix}_{files}={file_name}.{format}'
+            filename = f'{file_prefix}.{format}' if files == DEFAULT else f'{file_prefix}_{files}={file_name}.{format}'
 
         fig, _ = grid(
             nrow=n_facet_rows, 
             ncol=n_facet_cols, 
-            aspect_ratio=1.2,
+            aspect_ratio=1.25,
             sharey=sharey,
             sharex=sharex,
         )
@@ -214,25 +239,12 @@ def plot_dose_response(
         for ax, (facet_name, facet_data) in zip(fig.axes, file_data.groupby(facet)):
             if y_log:
                 facet_data = facet_data[facet_data[y] > 0.]
-            if colors_are_numeric:
-                _min, _max = facet_data[color].min(), facet_data[color].max()
-                if color_log:
-                    norm_fn = LogNorm
-                    if _min == 0.:
-                        _min += 1
-                else:
-                    norm_fn = Normalize
-                if _max == _min:
-                    _max += 1
-                norm = norm_fn(vmin=_min, vmax=_max)
-                scalar_mappable = ScalarMappable(norm=norm, cmap=cmap)
-                convert_to_color = lambda x: colormaps[cmap](norm(x))
             ax.set(
                 title=facet_name if facet_name != DEFAULT else '',
                 xlabel=x, 
                 ylabel=y,
-                xscale='log' if x_log else "linear",
-                yscale='log' if y_log else "linear",
+                xscale="log" if x_log else "linear",
+                yscale="log" if y_log else "linear",
             )
 
             for i in hlines:
@@ -248,46 +260,27 @@ def plot_dose_response(
                 color_control is not None and 
                 color_control in facet_data[color].values
             ):  
-                if colors_are_numeric:
-                    control_data = facet_data.query(f'{color} == {color_control}')
-                else:
-                    control_data = facet_data.query(f'{color} == "{color_control}"')
+                control_data = facet_data.query(f'{color} == @color_control')
                 _plot_mean_and_scatter(
                     ax, 
-                    control_data, 
-                    x, 
-                    y, 
+                    control_data,
                     color=_DARK_GREY,
-                    s=markersize, 
-                    capsize=capsize, 
                     zorder=5,
+                    **plot_defaults,
                 )
-            for i, (color_name, color_data) in enumerate(facet_data.groupby(color)):
-                if colors_are_numeric:
-                    color_args = dict(
-                        color=convert_to_color(color_name), 
-                    )
-                else:
-                    color_args = dict(
-                        color=f"C{i}" if color_name != DEFAULT else "C1", 
-                        label = color_name if color_name != DEFAULT else '',
-                    )
+            for color_name, color_data in facet_data.groupby(color):
                 if color_name != color_control:
                     ax, sc, err = _plot_mean_and_scatter(
                         ax, 
-                        color_data, 
-                        x, 
-                        y, 
-                        s=markersize, 
-                        capsize=capsize,
-                        **color_args
+                        color_data,
+                        **color_args[color_name],
+                        **plot_defaults,
                     )
 
             if colors_are_numeric:
                 fig.colorbar(scalar_mappable, ax=ax)
-
-        if not colors_are_numeric:
-            add_legend(ax)
+            elif len(color_args) > 1:
+                add_legend(ax)
         fig.savefig(
             filename, 
             dpi=300 if format.lower() == 'png' else 'figure',
@@ -301,7 +294,7 @@ def plot_mean_sd(
     data: DataFrame,
     x: Union[str, Iterable[str]], 
     y: str, 
-    panel_size: float = _PANEL_SIZE
+    panel_size: float = _PANEL_SIZE * 1.8
 ) -> PlotTuple:
 
     x = cast(x, to=list)
@@ -318,8 +311,8 @@ def plot_mean_sd(
     data_to_plot = data_to_plot.sort_values('grouping')
 
     fig, ax = grid(
-        panel_size=panel_size / .7, 
-        aspect_ratio=.7,
+        panel_size=panel_size, 
+        aspect_ratio=.8,
     )
     for m, s, label in zip((y_pos_mean, y_neg_mean), (y_pos_sd, y_neg_sd), ("Positive", "Negative")):
         y1 = data_to_plot[m] - data_to_plot[s]
