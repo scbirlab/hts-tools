@@ -368,3 +368,11 @@ def test_allow_mixed_wavelengths_gives_one_row_per_group():
             d.assign(c=['p', 'n', 'p', 'n']), 'm_fluor_ch1', 'c', pos='p', neg='n', allow_mixed_wavelengths=True,
         )
     assert z.shape[0] == 1 and z['fluor_ch1_wavelength'].iloc[0] == 'ex1;em1|ex2;em2'
+
+
+def test_missing_negative_control_error_lists_values(tmp_path):
+    p = tmp_path / 'd.tsv'
+    p.write_text('supplement\tm_abs_ch1\tabs_ch1_wavelength\nNone\t1\t600\nNone\t2\t600\nTMP\t3\t600\n')
+    d = pd.read_csv(p, sep='\t')  # 'None' is read as missing by pandas
+    with pytest.raises(ValueError, match=r"<missing> \(n=2\).*'TMP' \(n=1\)"):
+        hts.summarize(d, 'm_abs_ch1', neg='None', control_col='supplement', group=['supplement'])

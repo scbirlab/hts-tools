@@ -8,7 +8,7 @@ import pandas as pd
 from carabiner import print_err
 from scipy.stats import mannwhitneyu, ttest_ind
 
-from .utils import as_list, check_constant_within_groups, group_annotation
+from .utils import as_list, check_constant_within_groups, describe_values, group_annotation
 
 _STAT_SUFFIXES = (
     '_mwu.stat', '_mwu.p', 
@@ -233,8 +233,12 @@ def summarize(data: pd.DataFrame,
         (data[c] == n for c, n in zip(control_col, neg)),
     )
     if not is_neg.any():
+        found = '; '.join(f"{c}: {describe_values(data[c])}" for c in control_col)
         raise ValueError(
-            f"No negative controls found where {control_col} == {neg}."
+            f"No negative controls found where {control_col} == {neg}. "
+            f"Values present: {found}. Control labels such as 'None', 'NA' or 'null' "
+            "are read as missing values by pandas; if the label you gave appears as "
+            "<missing>, rename it in the input table (e.g. 'no_supplement')."
         )
     neg_controls = data[is_neg]
 

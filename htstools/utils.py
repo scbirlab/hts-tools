@@ -1,8 +1,10 @@
 """Miscellaneous utilities for hts-tools."""
 
 import warnings
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable
+from typing import Any, cast
 
+import pandas as pd
 from numpy.typing import ArrayLike
 from pandas import DataFrame, Series
 
@@ -88,6 +90,28 @@ def check_constant_within_groups(
             stacklevel=3,
         )
     return None
+
+
+def _is_missing_label(value: Hashable) -> bool:
+    """True only for scalar missing values (NaN, None, NaT, pd.NA); tuples etc. are never missing."""
+    return not isinstance(value, tuple) and bool(pd.isna(cast(Any, value)))
+
+
+def describe_values(x: Series, max_values: int = 12) -> str:
+    """Summarise the distinct values in a column, with counts, flagging missing values.
+
+    Used in error messages so that, for example, a control label that was read as 
+    missing is obvious. Note that pandas reads strings such as 'None', 'NA', 'null' 
+    and 'n/a' as missing values by default.
+
+    """
+    counts = x.value_counts(dropna=False)
+    items = [
+        ('<missing>' if _is_missing_label(value) else repr(value)) + f" (n={n})" 
+        for value, n in counts.items()
+    ]
+    shown = ', '.join(items[:max_values])
+    return shown + (f", ... ({len(items) - max_values} more)" if len(items) > max_values else '')
 
 
 def as_list(x: str | Iterable[str]) -> list[str]:

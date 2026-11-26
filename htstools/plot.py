@@ -365,15 +365,13 @@ def plot_zprime(
     data_to_plot['grouping'] = _grouping_labels(data_to_plot, x, y)
     data_to_plot = data_to_plot.sort_values('grouping')
 
-    ax.plot(
-        'grouping', y_, 
-        data=data_to_plot,
-    )
-    ax.scatter(
-        'grouping', y_, 
-        data=data_to_plot,
-        s=markersize,
-    )
+    # Numeric positions with explicit tick labels work with any grouping labels
+    positions = np.arange(data_to_plot.shape[0])
+    values = data_to_plot[y_].to_numpy(dtype=float)
+    ax.plot(positions, values)
+    ax.scatter(positions, values, s=markersize)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(data_to_plot['grouping'].astype(str).tolist())
 
     for n in np.linspace(0., 1., num=3):
         ax.axhline(n, color='lightgray')
