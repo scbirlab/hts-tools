@@ -83,7 +83,7 @@ jobs:
       MPLBACKEND: Agg
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - name: Install lowest supported dependencies on the oldest supported Python
         run: |
           uv venv --python 3.10 .venv
