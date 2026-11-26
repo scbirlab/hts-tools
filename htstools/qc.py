@@ -4,6 +4,9 @@ from typing import Iterable, Optional, Union
 from functools import reduce, partial
 from itertools import product
 
+from carabiner import cast
+
+from .utils import check_constant_within_groups
 from pandas import merge, DataFrame
 import numpy as np
 from scipy import stats
@@ -53,12 +56,24 @@ def _make_grouped_mean_variance(
         measurement_col + s for s in ('_neg', '_pos')
     )
     
-    if group is None:
-        group = '__group__'
-        df[group] = group
-        
     read_type = '_'.join(measurement_col.split('_')[1:3]) + '_wavelength'
-    z_data = df[group + [read_type]].drop_duplicates()
+    if read_type not in df.columns:
+        raise KeyError(f"The column {read_type} is missing from the input data.")
+
+    # Work on a slim copy so the caller's dataframe is never modified.
+    group_is_dummy = group is None
+    if group_is_dummy:
+        group = ['__group__']
+        needed_cols = [control_col, measurement_col, read_type]
+    else:
+        group = cast(group, to=list)
+        needed_cols = group + [control_col, measurement_col, read_type]
+    check_constant_within_groups(df, None if group_is_dummy else group, read_type, 'wavelength column')
+    df = df[list(dict.fromkeys(needed_cols))]
+    if group_is_dummy:
+        df = df.assign(**{group[0]: group[0]})
+
+    z_data = df[list(dict.fromkeys(group + [read_type]))].drop_duplicates()
 
     for q, name in zip((neg, pos), 
                        (neg_colname, pos_colname)):
@@ -67,23 +82,22 @@ def _make_grouped_mean_variance(
         )
 
         grouped = (
-            df
-            .query(f'{control_col} == "{q}"')
-            .groupby(group)[[measurement_col]]
+            df[df[control_col] == q]
+            .groupby(group, dropna=False)[[measurement_col]]
         )
 
         mean_ = (
             _mean(grouped, robust)
-            .reset_index(names=group)
+            .reset_index()
             .rename(columns={measurement_col: mean_name})
         )
         var_ = (
             _var(grouped, vartype, robust)
-            .reset_index(names=group)
+            .reset_index()
             .rename(columns={measurement_col: var_name})
         )
         z_data = reduce(
-            partial(merge, how='outer'), 
+            partial(merge, how='outer', on=group), 
             (z_data, mean_, var_),
         )
         
@@ -97,9 +111,8 @@ def _make_grouped_mean_variance(
         )
     )
     
-    if group == '__group__':
-        for d in (df, z_data):
-            d.drop(columns=[group], inplace=True)
+    if group_is_dummy:
+        z_data = z_data.drop(columns=group)
     return (neg_mean, neg_var, pos_mean, pos_var), z_data
 
 
@@ -113,7 +126,7 @@ def ssmd(
     robust: bool = False
 ) -> DataFrame:
     
-    """Calculate SSMD based on positive and negative controls, 
+    r"""Calculate SSMD based on positive and negative controls, 
     optionally within groups.
 
     Calculations are performed within groups, such as batches or plates, 
@@ -123,7 +136,7 @@ def ssmd(
     controls ($\mu_p$, $\mu_n$, $\sigma_p^2$, $\sigma_n^2$), and then within each group 
     calculates the SSMD, $s$:
 
-    $$s = \\frac{\mu_n - \mu_p}{\sqrt{\sigma_n^2 + \sigma_p^2}}$$
+    $$s = \frac{\mu_p - \mu_n}{\sqrt{\sigma_n^2 + \sigma_p^2}}$$
 
     Parameters
     ----------
@@ -182,7 +195,7 @@ def z_prime_factor(data: DataFrame,
                    group: Optional[Union[str, Iterable[str]]] = None,
                    robust: bool = False) -> DataFrame:
     
-    """Calculate Z'-factor based on positive and negative controls, 
+    r"""Calculate Z'-factor based on positive and negative controls, 
     optionally within groups.
 
     Calculations are performed within groups, such as batches or plates, 
@@ -192,7 +205,7 @@ def z_prime_factor(data: DataFrame,
     negative controls ($\mu_p$, $\mu_n$, $\sigma_p$, $\sigma_n$), and then within 
     each group calculates the Z'-factor, $s$:
 
-    $$s = 1 - 3 \\frac{\sigma_n + \sigma_p}{\\abs(\mu_n - \mu_p)}$$
+    $$s = 1 - 3 \frac{\sigma_n + \sigma_p}{\lvert \mu_n - \mu_p \rvert}$$
 
     Parameters
     ----------

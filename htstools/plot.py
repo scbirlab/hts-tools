@@ -1,6 +1,7 @@
 """Untilities for generating plots."""
 
 from typing import Iterable, List, Optional, Tuple, Union
+from functools import reduce
 
 from carabiner import cast
 from carabiner.mpl import add_legend, colorblind_palette, grid
@@ -14,12 +15,47 @@ from matplotlib.colors import LogNorm
 import numpy as np
 from scipy import stats
 
+from .tables import wide_replicates
+
 PlotTuple = Tuple[axes.Axes, figure.Figure]
 
 _DARK_GREY = "dimgrey"
 _LIGHT_GREY = "lightgrey"
 _MARKER_SIZE = 3.
 _PANEL_SIZE = 2.5
+
+def _format_label_part(values: pd.Series) -> pd.Series:
+    """Convert a column to str for use in labels, tolerating NaN and floats-that-are-ints."""
+    if pd.api.types.is_float_dtype(values):
+        return values.map(
+            lambda v: 'NA' if pd.isna(v) 
+            else str(int(v)) if float(v).is_integer() 
+            else str(v)
+        )
+    return values.astype(str)
+
+
+def _grouping_labels(
+    data: DataFrame, 
+    x: Iterable[str],
+    y: Optional[str] = None
+) -> pd.Series:
+    """Join grouping columns into one str label per row.
+    
+    Columns can be of any type (including numeric columns with NaN). 
+    "_wavelength" columns are only used if they belong to the 
+    measurement `y`.
+
+    """
+    x = cast(x, to=list)
+    if y is not None:
+        channel = '_'.join(y.split('_')[:2]) + '_wavelength'
+        x = [x_ for x_ in x if not x_.endswith('wavelength') or x_ == channel]
+    labels = [_format_label_part(data[x_]) for x_ in x]
+    if len(labels) == 0:
+        return pd.Series('', index=data.index)
+    return reduce(lambda a, b: a + ':' + b, labels)
+
 
 def _plot_errbars(
     ax: axes.Axes,
@@ -170,15 +206,15 @@ def plot_dose_response(
     DEFAULT = '__default__'
     filenames = []
     capsize, markersize = 2., _MARKER_SIZE
-    data[DEFAULT] = DEFAULT
+    data = data.assign(**{DEFAULT: DEFAULT})
 
     color = color or DEFAULT
     facet = facet or DEFAULT
     files = files or DEFAULT
     hlines = hlines or []
 
-    for dim in (color, facet, files):
-        data = data.query(f'{dim} != "blank"')
+    for dim in dict.fromkeys((color, facet, files)):
+        data = data[data[dim] != "blank"]
 
     n_facets = data[facet].unique().size
     n_facet_rows = int(np.ceil(np.sqrt(n_facets)))
@@ -187,7 +223,7 @@ def plot_dose_response(
     assert (n_facet_cols * n_facet_rows) >= n_facets, f"{n_facets} != {n_facet_rows} x {n_facet_cols}"
 
     for file_name, file_data in (
-        data.sort_values(by=x).groupby(files)
+        data.sort_values(by=x).groupby(files, dropna=False)
     ):
         if files == DEFAULT:
             filename = f'{file_prefix}.{format}'
@@ -202,7 +238,9 @@ def plot_dose_response(
             sharex=sharex,
         )
 
-        for ax, (facet_name, facet_data) in zip(fig.axes, file_data.groupby(facet)):
+        n_panels_used = 0
+        for ax, (facet_name, facet_data) in zip(fig.axes, file_data.groupby(facet, dropna=False)):
+            n_panels_used += 1
             ax.set(
                 title=facet_name if facet_name != DEFAULT else '',
                 xlabel=x, 
@@ -218,7 +256,7 @@ def plot_dose_response(
                 color_control is not None and 
                 color_control in facet_data[color].values
             ):
-                control_data = facet_data.query(f'{color} == "{color_control}"')
+                control_data = facet_data[facet_data[color] == color_control]
                 _plot_mean_and_scatter(
                     ax, 
                     control_data, 
@@ -230,7 +268,7 @@ def plot_dose_response(
                     zorder=5,
                 )
 
-            for i, (color_name, color_data) in enumerate(facet_data.groupby(color)):
+            for i, (color_name, color_data) in enumerate(facet_data.groupby(color, dropna=False)):
                 if color_name != color_control:
                     _plot_mean_and_scatter(
                         ax, 
@@ -243,12 +281,15 @@ def plot_dose_response(
                         label=color_name if color_name != DEFAULT else '',
                     )
 
+        for unused_ax in fig.axes[n_panels_used:]:
+            unused_ax.set_visible(False)
         add_legend(ax)
         fig.savefig(
             filename, 
             dpi=300 if format.lower() == 'png' else 'figure',
             bbox_inches='tight',
         )
+        plt.close(fig)
         filenames.append(filename)
     return filenames
 
@@ -269,7 +310,7 @@ def plot_mean_sd(
     )
 
     data_to_plot = data[x + [y_pos_mean, y_pos_sd, y_neg_mean, y_neg_sd]].copy()
-    data_to_plot['grouping'] = data_to_plot[x[0]].str.cat(data_to_plot[x[1:]], sep=':')
+    data_to_plot['grouping'] = _grouping_labels(data_to_plot, x, y)
 
     data_to_plot = data_to_plot.sort_values('grouping')
 
@@ -281,7 +322,7 @@ def plot_mean_sd(
         y1 = data_to_plot[m] - data_to_plot[s]
         y2 = data_to_plot[m] + data_to_plot[s]
 
-        ax.plot(
+        line, = ax.plot(
             'grouping', 
             m, 
             data=data_to_plot,
@@ -292,8 +333,8 @@ def plot_mean_sd(
             y1, 
             y2,
             data=data_to_plot,
+            color=line.get_color(),
             alpha=.7,
-            label=label,
         )
     ax.tick_params(
         axis='x', 
@@ -323,16 +364,7 @@ def plot_zprime(
     y_ = ('calc_' + y + '_zprime')
 
     data_to_plot = data[x + [y_]].copy()
-    x = [
-        x_ for x_ in x if (not x_.endswith('wavelength') or y in x_)
-    ]
-    data_to_plot['grouping'] = (
-        data_to_plot[x[0]]
-        .str.cat(
-            data_to_plot[x[1:]], 
-            sep=':',
-        )
-    )
+    data_to_plot['grouping'] = _grouping_labels(data_to_plot, x, y)
     data_to_plot = data_to_plot.sort_values('grouping')
 
     ax.plot(
@@ -388,7 +420,7 @@ def plot_heatmap(
     for ax in fig.axes[n_plates:]:
         ax.set_visible(False)
 
-    for ax, (plate_name, plate_data) in zip(fig.axes, data.groupby(x)):
+    for ax, (plate_name, plate_data) in zip(fig.axes, data.groupby(x, dropna=False)):
         this_plate_data = pd.pivot_table(
             plate_data, 
             index='row_id', 
@@ -417,15 +449,40 @@ def plot_heatmap(
         ]
         ax.set_xticks(
             x_locs, 
-            labels=[str(loc + 1) for loc in x_locs],
+            labels=[str(this_plate_data.columns.values[loc]) for loc in x_locs],
             size='x-small',
         )
         ax.set_title(
-            ':'.join(plate_name),
+            ':'.join(map(str, plate_name if isinstance(plate_name, tuple) else (plate_name, ))),
             fontdict={'fontsize': 8.},
         )
         
     return fig, axes
+
+
+def _log_like_bins(
+    values: pd.Series, 
+    n_bins: int, 
+    all_positive: bool, 
+    linthresh: float
+):
+    """Bin edges evenly spaced on a log axis or, if some values are <= 0, evenly spaced 
+    in the inverse hyperbolic sine of the data (approximating a symmetric-log axis).
+
+    The bins always span the full range of `values`. Returns `n_bins` if no
+    range exists to make bins from.
+
+    """
+    if values.nunique() < 2:
+        return n_bins
+    low, high = values.min(), values.max()
+    if all_positive:
+        return np.geomspace(low, high, num=n_bins)
+    bins = linthresh * np.sinh(
+        np.linspace(np.arcsinh(low / linthresh), np.arcsinh(high / linthresh), num=n_bins)
+    )
+    bins[0], bins[-1] = low, high  # undo floating-point drift so no data fall outside the bins
+    return bins
 
 
 def plot_histogram(
@@ -438,14 +495,14 @@ def plot_histogram(
 ) -> PlotTuple:
     
     read_type = '_'.join(x.split('_')[1:3]) + '_wavelength'
-    data = data.query(f"{read_type} != ''")
 
     if not read_type in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
     
-    n_read_types = data[read_type].unique().size
+    data = data[data[read_type] != '']
     data = data[[control_col, read_type, x]].dropna().copy()
     data = data[~np.isinf(data[x])].copy() 
+    n_read_types = data[read_type].unique().size
     
     n_cols = 4
     fig, axes = grid(
@@ -455,23 +512,22 @@ def plot_histogram(
     )
 
     for row, (wv, wv_df) in zip(axes, data.groupby(read_type)):
+        # zero or negative values need a symmetric-log axis, with its own bins
+        all_positive = bool((wv_df[x] > 0.).all())
+        nonzero = wv_df[x][wv_df[x] != 0.].abs()
+        linthresh = float(nonzero.quantile(.05)) if nonzero.size > 0 else 1.
         for i, control in enumerate((positive, negative, None)):
             if control is not None:
-                q = f'{control_col} == "{control}"'
+                this_data = wv_df[wv_df[control_col] == control]
                 axes = row[0], row[2]
                 title = 'Controls'
             else:
-                q = f'{control_col} not in ["{negative}", "{positive}"]'
+                this_data = wv_df[~wv_df[control_col].isin([negative, positive])]
                 axes = row[1], row[3]
                 title = 'Experiment'
             
-            this_data = wv_df.query(q)
             n_bins = 5 + this_data.shape[0] // 20
-            bins_log = np.geomspace(
-                this_data[x].min(), 
-                this_data[x].max(),
-                num=n_bins,
-            )
+            bins_log = _log_like_bins(this_data[x], n_bins, all_positive, linthresh)
 
             for ax, b in zip(axes, (n_bins, bins_log)):
                 ax.hist(
@@ -483,7 +539,7 @@ def plot_histogram(
                     zorder=3 - i,
                 )
             
-                if x.endswith('_norm'):
+                if '_norm.' in x:
                     for m in (0., 1.):
                         ax.axvline(
                             m, 
@@ -496,7 +552,11 @@ def plot_histogram(
                     ylabel='Frequency',
                     title=title,
                 )
-            ax.set_xscale('log')
+            # symlog handles zero or negative values, which a log axis cannot show
+            if all_positive:
+                ax.set_xscale('log')
+            else:
+                ax.set_xscale('symlog', linthresh=linthresh)
             if title == "Controls":
                 add_legend(ax)
     return fig, ax
@@ -513,6 +573,10 @@ def plot_replicates(
 ) -> PlotTuple:
 
     grouping = cast(grouping, to=list)
+    if control_col not in grouping:
+        raise ValueError(
+            f"The control column '{control_col}' must be one of the grouping columns: {grouping}"
+        )
     read_type = '_'.join(x.split('_')[1:3]) + '_wavelength'
     if not read_type in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
@@ -534,26 +598,32 @@ def plot_replicates(
         sub_df = (
             wv_df
             .query('replicate < 3')
-            .assign(replicate=lambda x: 'rep_' + x['replicate'].astype(str))
         )
-        df_wide = pd.pivot_table(
-            sub_df,
-            index=grouping,
-            columns='replicate', 
-            values=x,
+        if sub_df.duplicated(grouping + ['replicate']).any():
+            raise ValueError(
+                f"Grouping columns {grouping} do not uniquely identify a measurement within "
+                "each replicate: pooling them would average different measurements. "
+                "Add more grouping columns (e.g. compound or well)."
+            )
+        df_wide = wide_replicates(sub_df, grouping, x)
+        if not {'rep_1', 'rep_2'} <= set(df_wide.columns):
+            raise ValueError(
+                f"Need at least 2 replicates per group to plot replicate correlations, "
+                f"found columns {df_wide.columns.tolist()}."
+            )
+        pearson_corr = df_wide[['rep_1', 'rep_2']].corr().iloc[0, 1]  # ignores NaNs pairwise
+
+        control_values = pd.Series(
+            df_wide.index.get_level_values(control_col), 
+            index=df_wide.index,
         )
-        pearson_corr = np.corrcoef(
-            df_wide.values,
-            rowvar=False,
-        )[0, -1]
 
         for ax in row:
             for i, control in enumerate((positive, negative, None)):
                 if control is not None:
-                    q = f'{control_col} == "{control}"'
+                    this_data = df_wide[control_values == control]
                 else:
-                    q = f'{control_col} not in ["{negative}", "{positive}"]'
-                this_data = df_wide.query(q)
+                    this_data = df_wide[~control_values.isin([negative, positive]).to_numpy()]
                 ax.scatter(
                     'rep_1', 'rep_2', 
                     data=this_data, 
@@ -578,10 +648,7 @@ def plot_replicates(
 
         if do_log:
             df_gt_zero = df_wide.query('rep_1 > 0 and rep_2 > 0')
-            pearson_corr = np.corrcoef(
-                np.log(df_gt_zero),
-                rowvar=False,
-            )[0, -1]
+            pearson_corr = np.log(df_gt_zero[['rep_1', 'rep_2']]).corr().iloc[0, 1]
             ax.set(
                 xscale='log', 
                 yscale='log',

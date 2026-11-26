@@ -19,6 +19,7 @@ from carabiner import (
 from carabiner.mpl import figsaver
 from carabiner.pd import get_formats, read_table, write_stream
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 from pandas import concat, merge, DataFrame
 
 from . import __version__
@@ -51,7 +52,47 @@ def _save_plot(
         prefix=f"{prefix}_{column}_", 
         format=format,
     )(fig, name=suffix)
+    plt.close(fig)  # avoid accumulating open figures
     return filename
+
+
+def _merge_on(frames: Iterable[DataFrame], on: List[str]) -> DataFrame:
+    """Outer-merge tables on the grouping columns only.
+
+    Merging on every shared column (the pandas default) also joins on float 
+    columns such as means, which is fragile. Instead, each table must have 
+    at most one row per grouping key, and columns shared between tables 
+    (e.g. wavelength annotations) are combined, raising an error if their 
+    non-missing values conflict.
+    
+    """
+    def _merge(left: DataFrame, right: DataFrame) -> DataFrame:
+        for name, table in (('left', left), ('right', right)):
+            if table.duplicated(on).any():
+                raise ValueError(
+                    f"The grouping columns {on} do not uniquely identify rows in the "
+                    f"{name} table, so tables cannot be merged without duplicating rows."
+                )
+        shared = [c for c in right if c in left and c not in on]
+        merged = merge(
+            left, 
+            right, 
+            on=on, 
+            how='outer', 
+            suffixes=('', '__right'),
+            validate='one_to_one',
+        )
+        for c in shared:
+            other = merged.pop(c + '__right')
+            conflicts = merged[c].notna() & other.notna() & (merged[c] != other)
+            if conflicts.any():
+                raise ValueError(
+                    f"Column '{c}' has conflicting values between tables for "
+                    f"{int(conflicts.sum())} group(s)."
+                )
+            merged[c] = merged[c].fillna(other)
+        return merged
+    return reduce(_merge, frames)
 
 
 def _subset_cols(
@@ -122,7 +163,7 @@ def _col_renamer(
 ) -> Dict[str, str]:
     return {
         col: col.replace(*rep) for col in data.columns 
-        if col.startswith(mcol) and col != mcol
+        if col.startswith(mcol + '_')
     }
 
 
@@ -236,10 +277,7 @@ def _qc(args: Namespace) -> None:
             )
             z_data.append(z)
 
-    z_data = reduce(
-        partial(merge, how='outer'), 
-        z_data,
-    )
+    z_data = _merge_on(z_data, args.grouping)
     
     print_err(
         f"""Processed {args.input.name}
@@ -313,10 +351,7 @@ def _summarize(args: Namespace) -> None:
         )
         summaries.append(z)
 
-    summaries = reduce(
-        partial(merge, how='outer'), 
-        summaries,
-    )
+    summaries = _merge_on(summaries, args.grouping)
     
     print_err(
         f"""Processed {args.input.name}
@@ -461,7 +496,7 @@ def _plot_rep(args: Namespace) -> None:
             negative=args.negative,
             positive=args.positive,
         ),
-        partial(replicate_table, group=args.grouping)
+        partial(replicate_table, group=args.grouping, seed=args.seed)
     )
     return None
 
@@ -615,6 +650,14 @@ def main() -> None:
         help='Negative control value.',
     )
     ctrl_opts = [control, pos_val, neg_val]
+    # Positive controls are optional where they are not used in the calculation
+    pos_val_optional = CLIOption(
+        '--positive', '-p', 
+        type=str,
+        default=None,
+        help='Positive control value. Optional, unless using NPG normalization.',
+    )
+    ctrl_opts_pos_optional = [control, pos_val_optional, neg_val]
 
     grouping = CLIOption(
         '--grouping', '-g', 
@@ -622,7 +665,8 @@ def main() -> None:
         nargs='*',
         required=True,
         help='Column heading(s) indicating the data groups '
-             'within which to process measurements.',
+             'within which to process measurements. Rows with missing '
+             'values in these columns are treated as one group.',
     )
     plot_x = CLIOption(
         '--x', '-x', 
@@ -640,7 +684,7 @@ def main() -> None:
         '--control', '-l', 
         type=str, 
         default=None,
-        help='Column to use for plot color.',
+        help='Value in the color column to plot as a dark grey control.',
     )
     plot_panel = CLIOption(
         '--panel', '-p', 
@@ -689,6 +733,13 @@ def main() -> None:
         help='Save plot with this prefix.',
     )
     plot_opts = [plot_format, plot_output_name]
+    seed = CLIOption(
+        '--seed', 
+        type=int,
+        default=42,
+        help='Random seed for assigning replicate labels, for reproducible plots. '
+             'Default: 42.',
+    )
 
     parse = CLICommand(
         "parse",
@@ -721,13 +772,13 @@ def main() -> None:
         Normalize data according to grouped 
         positive and negative controls.
         """,
-        options=std_io + [norm_method, measurement_prefix, grouping] + ctrl_opts,
+        options=std_io + [norm_method, measurement_prefix, grouping] + ctrl_opts_pos_optional,
         main=_normalize,
     )
     summarize = CLICommand(
         "summarize",
         description="""Generate summary statistics.""",
-        options=std_io + [measurement_prefix, grouping] + ctrl_opts + [plot_prefix, plot_format],
+        options=std_io + [measurement_prefix, grouping] + ctrl_opts_pos_optional + [plot_prefix, plot_format],
         main=_summarize,
     )
     qc = CLICommand(
@@ -760,7 +811,7 @@ def main() -> None:
     plot_rep = CLICommand(
         "plot-rep",
         description="""Generate replicate correlation plots.""",
-        options=[std_input, measurement_prefix, grouping, formatting] + ctrl_opts + plot_opts,
+        options=[std_input, measurement_prefix, grouping, formatting] + ctrl_opts + [seed] + plot_opts,
         main=_plot_rep,
     )
     plot_hist = CLICommand(

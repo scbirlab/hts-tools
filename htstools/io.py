@@ -29,7 +29,8 @@ BiotekData = namedtuple(
 def _get_sheet_values(sheet) -> List[str]:
     s = []
     for row in sheet: 
-        values = [r.value or '' for r in row]
+        # only None means an empty cell: 0 and 0.0 are real values
+        values = ['' if r.value is None else r.value for r in row]
         values = [r.isoformat() if isinstance(r, datetime) 
                   else r 
                   for r in values]
@@ -72,6 +73,8 @@ def _biotek_extract(x: Iterable) -> BiotekData:
         except IndexError:
             continue
         else:
+            if not isinstance(row0, str):  # numeric cells in XLSX
+                row0 = ''
             row0esc = row0.replace(' ', '_')  # to escape spaces
         
         all_none = all(len(str(item)) == 0 for item in row)
@@ -186,6 +189,11 @@ def _parse_read_name(
         fluor_count += 1
         wv = f'ex:{wavelengths[0]}nm;em:{wavelengths[1]}nm'
         read_type = f'fluor_ch{fluor_count}'
+    else:
+        raise ValueError(
+            f'Could not parse read name "{read_name}": expected 1 (absorbance) '
+            f'or 2 (fluorescence) wavelengths, found {len(wavelengths)}.'
+        )
 
     return read_type, wv, abs_count, fluor_count
 
@@ -241,7 +249,8 @@ def _biotek_plate(
 def _biotek_row(
     data: BiotekData,
     filename: str,
-    measurement_prefix: str = 'measured_'
+    measurement_prefix: str = 'measured_',
+    overflow_value: str = "OVRFLW"
 ) -> Tuple[pd.DataFrame, Dict[str, set]]:
     
     read_types = defaultdict(set)
@@ -282,7 +291,10 @@ def _biotek_row(
             )
 
             read_types[read_type].add(wv)
-            df[measurement_prefix + read_type] = df[header].copy()
+            # replace Biotek "OVRFLW" with NaN, as for plate-shaped data
+            df[measurement_prefix + read_type] = (
+                df[header].replace(overflow_value, np.nan).astype(float)
+            )
             df[read_type + '_wavelength'] = wv
             cols_to_drop.append(header)
 
@@ -308,7 +320,7 @@ def _from_platereader(
     elif delimiter.in_delim in _FORMAT:
         data_handle = _read_delim(file, delimiter=delimiter)
     else:
-        raise NotImplementedError(f'File format "{format}" not supported.')
+        raise NotImplementedError(f'File format "{delimiter.in_delim}" not supported.')
     
     if vendor == 'Biotek':
         extracted_data = {
@@ -394,4 +406,4 @@ def from_platereader(file: Union[IO, str, Iterable[Union[IO, str]]],
     
     return pd.concat((
         df for parsed_file in parsed_files for _, (df, _) in parsed_file.items()
-    ), axis=0)
+    ), axis=0, ignore_index=True)
