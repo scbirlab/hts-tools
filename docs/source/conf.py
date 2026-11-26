@@ -6,10 +6,12 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+from importlib.metadata import version as _version
+
 project = 'hts-tools'
 copyright = '2023, Eachan Johnson'
 author = 'Eachan Johnson'
-release = '0.0.1'
+release = _version('hts-tools')
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

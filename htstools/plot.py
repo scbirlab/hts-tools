@@ -1,23 +1,25 @@
 """Untilities for generating plots."""
 
-from typing import Iterable, List, Optional, Tuple, Union
+from collections.abc import Iterable
 from functools import reduce
 
-from carabiner import cast
-from carabiner.mpl import add_legend, colorblind_palette, grid
-import pandas as pd
-from pandas import DataFrame
 import matplotlib.pyplot as plt
-from matplotlib import axes, figure
-from matplotlib.container import ErrorbarContainer
-from matplotlib.collections import PathCollection
-from matplotlib.colors import LogNorm
 import numpy as np
+import pandas as pd
+from carabiner.mpl import add_legend, grid
+from matplotlib import axes, figure
+from matplotlib.collections import PathCollection
+from matplotlib.container import ErrorbarContainer
+from pandas import DataFrame
 from scipy import stats
 
 from .tables import wide_replicates
+from .utils import as_list
 
-PlotTuple = Tuple[axes.Axes, figure.Figure]
+PlotTuple = tuple[figure.Figure, axes.Axes]
+"""A figure and its single set of axes, as returned by most plotting functions."""
+PlotGridTuple = tuple[figure.Figure, np.ndarray]
+"""A figure and an array of its axes, as returned by multi-panel plotting functions."""
 
 _DARK_GREY = "dimgrey"
 _LIGHT_GREY = "lightgrey"
@@ -38,7 +40,7 @@ def _format_label_part(values: pd.Series) -> pd.Series:
 def _grouping_labels(
     data: DataFrame, 
     x: Iterable[str],
-    y: Optional[str] = None
+    y: str | None = None
 ) -> pd.Series:
     """Join grouping columns into one str label per row.
     
@@ -47,7 +49,7 @@ def _grouping_labels(
     measurement `y`.
 
     """
-    x = cast(x, to=list)
+    x = as_list(x)
     if y is not None:
         channel = '_'.join(y.split('_')[:2]) + '_wavelength'
         x = [x_ for x_ in x if not x_.endswith('wavelength') or x_ == channel]
@@ -64,7 +66,7 @@ def _plot_errbars(
     y: str,
     ci: float = .95,
     **kwargs
-) -> Tuple[axes.Axes, ErrorbarContainer]:
+) -> tuple[axes.Axes, ErrorbarContainer]:
     
     grouped = data.groupby([x])[[y]]
     
@@ -90,11 +92,10 @@ def _plot_scatter_open_circles(
     y: str,
     color: str,
     **kwargs
-) -> Tuple[axes.Axes, PathCollection]:
+) -> tuple[axes.Axes, PathCollection]:
     scatter = ax.scatter(
-        x, 
-        y, 
-        data=data,
+        data[x], 
+        data[y], 
         edgecolors=color, 
         facecolors='none',
         **kwargs
@@ -112,7 +113,7 @@ def _plot_mean_and_scatter(
     s: float = _MARKER_SIZE,
     zorder: int = 0,
     **kwargs
-) -> Tuple[axes.Axes, PathCollection, ErrorbarContainer]:
+) -> tuple[axes.Axes, PathCollection, ErrorbarContainer]:
     ax, errbars = _plot_errbars(
         ax, 
         data, 
@@ -143,18 +144,18 @@ def plot_dose_response(
     x: str, 
     y: str, 
     file_prefix: str,
-    color: Optional[str] = None, 
-    color_control: Optional[str] = None, 
-    facet: Optional[str] = None,
-    files: Optional[str] = None,
-    hlines: Optional[Iterable[float]] = None,
+    color: str | None = None, 
+    color_control: str | None = None, 
+    facet: str | None = None,
+    files: str | None = None,
+    hlines: Iterable[float] | None = None,
     panel_size: float = _PANEL_SIZE,
     format: str = 'pdf',
     sharey: bool = False,
     sharex: bool = False,
     x_log: bool = False,
     y_log: bool = False
-) -> List[str]:
+) -> list[str]:
 
     """Plot dose response curves, optionally splitting data across files, facets and colors.
     
@@ -296,12 +297,12 @@ def plot_dose_response(
 
 def plot_mean_sd(
     data: DataFrame,
-    x: Union[str, Iterable[str]], 
+    x: str | Iterable[str], 
     y: str, 
     panel_size: float = _PANEL_SIZE
 ) -> PlotTuple:
 
-    x = cast(x, to=list)
+    x = as_list(x)
     y_pos_mean, y_pos_sd = (
         'calc_' + y + suffix for suffix in ('_pos_mean', '_pos_sd')
     )
@@ -318,24 +319,21 @@ def plot_mean_sd(
         panel_size=panel_size / .7, 
         aspect_ratio=.7,
     )
+    # Numeric positions with explicit tick labels behave the same across matplotlib versions
+    positions = np.arange(data_to_plot.shape[0])
     for m, s, label in zip((y_pos_mean, y_neg_mean), (y_pos_sd, y_neg_sd), ("Positive", "Negative")):
-        y1 = data_to_plot[m] - data_to_plot[s]
-        y2 = data_to_plot[m] + data_to_plot[s]
-
-        line, = ax.plot(
-            'grouping', 
-            m, 
-            data=data_to_plot,
-            label=label,
-        )
+        mean = data_to_plot[m].to_numpy(dtype=float)
+        sd = data_to_plot[s].to_numpy(dtype=float)
+        line, = ax.plot(positions, mean, label=label)
         ax.fill_between(
-            'grouping', 
-            y1, 
-            y2,
-            data=data_to_plot,
+            positions, 
+            mean - sd, 
+            mean + sd,
             color=line.get_color(),
             alpha=.7,
         )
+    ax.set_xticks(positions)
+    ax.set_xticklabels(data_to_plot['grouping'].astype(str).tolist())
     ax.tick_params(
         axis='x', 
         labelrotation=90, 
@@ -351,11 +349,11 @@ def plot_mean_sd(
 
 def plot_zprime(
     data: DataFrame,
-    x: Union[str, Iterable[str]], 
+    x: str | Iterable[str], 
     y: str, 
     panel_size: float = _PANEL_SIZE * 1.8
 ) -> PlotTuple:
-    x = cast(x, to=list)
+    x = as_list(x)
     fig, ax = grid(
         panel_size=panel_size, 
         aspect_ratio=.8,
@@ -394,12 +392,12 @@ def plot_zprime(
 
 def plot_heatmap(
     data: DataFrame,
-    x: Union[str, Iterable[str]],
+    x: str | Iterable[str],
     y: str,
     panel_size: float = _PANEL_SIZE
-) -> PlotTuple:
+) -> PlotGridTuple:
     
-    x = cast(x, to=list)
+    x = as_list(x)
     plates = data[x].drop_duplicates()
     n_plates = plates.shape[0]
 
@@ -496,7 +494,7 @@ def plot_histogram(
     
     read_type = '_'.join(x.split('_')[1:3]) + '_wavelength'
 
-    if not read_type in data.columns:
+    if read_type not in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
     
     data = data[data[read_type] != '']
@@ -565,20 +563,20 @@ def plot_histogram(
 def plot_replicates(
     data: DataFrame,
     x: str,
-    grouping: Union[str, Iterable[str]],
+    grouping: str | Iterable[str],
     control_col: str,
     negative: str,
     positive: str,
     panel_size: float = _PANEL_SIZE
-) -> PlotTuple:
+) -> PlotGridTuple:
 
-    grouping = cast(grouping, to=list)
+    grouping = as_list(grouping)
     if control_col not in grouping:
         raise ValueError(
             f"The control column '{control_col}' must be one of the grouping columns: {grouping}"
         )
     read_type = '_'.join(x.split('_')[1:3]) + '_wavelength'
-    if not read_type in data.columns:
+    if read_type not in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
     
     n_read_types = data[read_type].unique().size
@@ -611,7 +609,7 @@ def plot_replicates(
                 f"Need at least 2 replicates per group to plot replicate correlations, "
                 f"found columns {df_wide.columns.tolist()}."
             )
-        pearson_corr = df_wide[['rep_1', 'rep_2']].corr().iloc[0, 1]  # ignores NaNs pairwise
+        pearson_corr = float(df_wide[['rep_1', 'rep_2']].corr().to_numpy()[0, 1])  # ignores NaNs pairwise
 
         control_values = pd.Series(
             df_wide.index.get_level_values(control_col), 
@@ -648,7 +646,7 @@ def plot_replicates(
 
         if do_log:
             df_gt_zero = df_wide.query('rep_1 > 0 and rep_2 > 0')
-            pearson_corr = np.log(df_gt_zero[['rep_1', 'rep_2']]).corr().iloc[0, 1]
+            pearson_corr = float(df_gt_zero[['rep_1', 'rep_2']].apply(np.log).corr().to_numpy()[0, 1])
             ax.set(
                 xscale='log', 
                 yscale='log',
@@ -666,10 +664,10 @@ def plot_scatter(
     measurement_col: str,
     x: str, 
     y: str, 
-    color: Optional[str] = None,
+    color: str | None = None,
     log_color: bool = False,
-    hlines: Optional[Iterable[float]] = None,
-    vlines: Optional[Iterable[float]] = None,
+    hlines: Iterable[float] | None = None,
+    vlines: Iterable[float] | None = None,
     x_log: bool = False,
     y_log: bool = False,
     panel_size: float = _PANEL_SIZE,

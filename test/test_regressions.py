@@ -1,7 +1,5 @@
 """Regression tests for bugs fixed in hts-tools."""
 
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -211,6 +209,7 @@ def test_normalize_twice_replaces_control_means():
 
 def test_xlsx_zero_cells_are_preserved(tmp_path):
     from openpyxl import Workbook, load_workbook
+
     from htstools.io import _get_sheet_values
     wb = Workbook()
     wb.active.append(['A', 0, 0.0, None, 1.5])
@@ -223,7 +222,8 @@ def test_xlsx_zero_cells_are_preserved(tmp_path):
 # ---- CLI ------------------------------------------------------------------
 
 def test_cli_normalize_without_positive(tmp_path):
-    import subprocess, sys
+    import subprocess
+    import sys
     src = tmp_path / 'in.tsv'
     _data().to_csv(src, sep='\t', index=False)
     out = tmp_path / 'out.tsv'
@@ -336,7 +336,6 @@ def test_plot_replicates_runs_with_nan_keys():
 
 
 def test_biotek_row_overflow_becomes_nan_and_zero_is_kept():
-    from collections import defaultdict
     from htstools.io import BiotekData, _biotek_row
     data = BiotekData(
         Meta={'Plate Number': [['1']]}, Procedure_Details={}, Layout={},
@@ -348,3 +347,24 @@ def test_biotek_row_overflow_becomes_nan_and_zero_is_kept():
     df, _ = _biotek_row(data, filename='delim:f.csv:s')
     assert df['measured_abs_ch1'].isna().tolist() == [False, True, False]
     assert df['measured_abs_ch1'].iloc[2] == 0.
+
+
+def test_allow_mixed_wavelengths_gives_one_row_per_group():
+    d = pd.DataFrame(dict(
+        s=['WT', 'WT', 'mut', 'mut'], m_fluor_ch1=[1., 2., 3., 4.],
+        fluor_ch1_wavelength=['ex1;em1', 'ex1;em1', 'ex2;em2', 'ex2;em2'],
+    ))
+    with pytest.raises(ValueError, match="wavelength"):
+        hts.summarize(d, 'm_fluor_ch1', neg='WT', control_col='s', group=['s'])
+    with pytest.warns(UserWarning):
+        r = hts.summarize(d, 'm_fluor_ch1', neg='WT', control_col='s', group=['s'], allow_mixed_wavelengths=True)
+    assert r.shape[0] == 2  # not duplicated by the wavelength annotation
+    with pytest.warns(UserWarning, match="mixed wavelengths were explicitly allowed"):
+        hts.summarize(d, 'm_fluor_ch1', neg='WT', control_col='s', group=['s'], allow_mixed_wavelengths=True)
+    with pytest.raises(TypeError):
+        hts.normalize(d, 'm_fluor_ch1', 's', neg='WT', method='pon', allow_mixed_wavelengths=True)
+    with pytest.warns(UserWarning):
+        z = hts.z_prime_factor(
+            d.assign(c=['p', 'n', 'p', 'n']), 'm_fluor_ch1', 'c', pos='p', neg='n', allow_mixed_wavelengths=True,
+        )
+    assert z.shape[0] == 1 and z['fluor_ch1_wavelength'].iloc[0] == 'ex1;em1|ex2;em2'

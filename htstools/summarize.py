@@ -1,14 +1,14 @@
 """Statistical testing and hit-calling."""
 
-from typing import Dict, Iterable, List, Tuple, Union
+from collections.abc import Iterable
 from functools import reduce
 
-from carabiner import cast, print_err
-import pandas as pd
 import numpy as np
+import pandas as pd
+from carabiner import print_err
 from scipy.stats import mannwhitneyu, ttest_ind
 
-from .utils import check_constant_within_groups
+from .utils import as_list, check_constant_within_groups, group_annotation
 
 _STAT_SUFFIXES = (
     '_mwu.stat', '_mwu.p', 
@@ -28,10 +28,10 @@ def _hashable_key(key) -> tuple:
 
 
 def _group_getter(
-    names: Union[str, Iterable[str]], 
+    names: str | Iterable[str], 
     groups: Iterable[str], 
     control: Iterable[str]
-) -> Tuple:
+) -> tuple:
     """Convert the key of a data group into the key of its matching negative control group."""
     return _hashable_key(tuple(
         name for name, group in zip(_as_tuple(names), groups) 
@@ -42,7 +42,7 @@ def _group_getter(
 def _compare_to_negative(
     this: pd.Series, 
     neg: pd.Series
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Calculate MWU, Welch's T-test, SSMD, and LFC of `this` relative to `neg`.
 
     All statistics are NaN if either sample is empty (after dropping NaNs).
@@ -114,9 +114,10 @@ def _grouped_comparison(
 
 def summarize(data: pd.DataFrame, 
               measurement_col: str,
-              neg: Union[List[str], str],
-              control_col: Union[List[str], str],
-              group: Union[List[str], str]) -> pd.DataFrame:
+              neg: list[str] | str,
+              control_col: list[str] | str,
+              group: list[str] | str,
+              allow_mixed_wavelengths: bool = False) -> pd.DataFrame:
 
     """Add summary statstics to dataframe.
 
@@ -142,6 +143,12 @@ def summarize(data: pd.DataFrame,
         control_col.
     control_col : str
         Column(s) from which to take the negative control label(s).
+    allow_mixed_wavelengths : bool, optional
+        By default a ValueError is raised if the wavelength varies within a 
+        group, or within the groups that negative controls are matched on, 
+        because statistics would then pool or compare different wavelengths. 
+        Set to True to allow this (wavelengths are joined with "|" in the 
+        output). Default: False.
 
     Returns
     -------
@@ -190,19 +197,19 @@ def summarize(data: pd.DataFrame,
 
     """
     
-    control_col = cast(control_col, to=list)
-    neg = cast(neg, to=list)
+    control_col = as_list(control_col)
+    neg = as_list(neg)
 
     if not len(neg) == len(control_col):
         raise ValueError("Neg and control_col are different lengths:"
                          f"\n\t({len(neg)})\t{', '.join(map(str, neg))}"
                          f"\n\t({len(control_col)})\t{', '.join(control_col)}")
     
-    group = cast(group, to=list)
+    group = as_list(group)
     
     read_type = '_'.join(measurement_col.split('_')[1:3]) + '_wavelength'
 
-    if not read_type in data.columns:
+    if read_type not in data.columns:
         raise KeyError(f"The column {read_type} is missing from the input data.")
     
     # negatives are matched on the grouping columns other than the control column(s), 
@@ -218,10 +225,11 @@ def summarize(data: pd.DataFrame,
         neg_group if len(neg_group) > 0 else None, 
         read_type, 
         'wavelength column',
+        allow=allow_mixed_wavelengths,
     )
 
     is_neg = reduce(
-        np.logical_and, 
+        lambda a, b: a & b, 
         (data[c] == n for c, n in zip(control_col, neg)),
     )
     if not is_neg.any():
@@ -230,7 +238,7 @@ def summarize(data: pd.DataFrame,
         )
     neg_controls = data[is_neg]
 
-    read_type_ann = data[list(dict.fromkeys(group + [read_type]))].drop_duplicates()
+    read_type_ann = group_annotation(data, group, read_type)
     
     grouped = data.groupby(group, dropna=False)
 
@@ -240,7 +248,7 @@ def summarize(data: pd.DataFrame,
     }
     summary = (
         grouped[measurement_col]
-        .agg(summaries_to_calculate)
+        .agg(list(summaries_to_calculate))
         .reset_index()
         .rename(columns=renamer)
     )

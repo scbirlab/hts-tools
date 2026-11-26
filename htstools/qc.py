@@ -1,17 +1,19 @@
 """Functions for performing quality control checks on data."""
 
-from typing import Iterable, Optional, Union
-from functools import reduce, partial
+from collections.abc import Callable, Iterable
+from functools import partial, reduce
 from itertools import product
 
-from carabiner import cast
-
-from .utils import check_constant_within_groups
-from pandas import merge, DataFrame
 import numpy as np
+from pandas import DataFrame, merge
+from pandas.api.typing import DataFrameGroupBy
 from scipy import stats
 
-_SUMMARY_FUNCTIONS = {
+from .utils import as_list, check_constant_within_groups, group_annotation
+
+_SummaryFunction = Callable[[DataFrameGroupBy], DataFrame]
+
+_SUMMARY_FUNCTIONS: dict[str, dict[bool, _SummaryFunction]] = {
     'sd': {
         False: lambda x: x.std(),
         True: lambda x: x.agg(stats.median_abs_deviation),
@@ -27,16 +29,16 @@ _SUMMARY_FUNCTIONS = {
 }
 
 def _var(
-    df: DataFrame, 
+    df: DataFrameGroupBy, 
     vartype: str = 'sd',
     robust: bool = False
-):
+) -> DataFrame:
     return _SUMMARY_FUNCTIONS[vartype][robust](df)
 
 def _mean(
-    df: DataFrame, 
+    df: DataFrameGroupBy, 
     robust: bool = False
-):
+) -> DataFrame:
     return _SUMMARY_FUNCTIONS['mean'][robust](df)
 
 def _make_grouped_mean_variance(
@@ -45,10 +47,11 @@ def _make_grouped_mean_variance(
     control_col: str,
     pos: str,
     neg: str,
-    group: Optional[Union[str, Iterable[str]]] = None,
+    group: str | Iterable[str] | None = None,
     vartype: str = 'sd',
-    robust: bool = False
-) -> DataFrame:
+    robust: bool = False,
+    allow_mixed_wavelengths: bool = False
+) -> tuple[tuple[str, str, str, str], DataFrame]:
     if vartype not in ('sd', 'var'):
         raise ValueError(f"{vartype=} not supported.")
     
@@ -62,18 +65,15 @@ def _make_grouped_mean_variance(
 
     # Work on a slim copy so the caller's dataframe is never modified.
     group_is_dummy = group is None
-    if group_is_dummy:
-        group = ['__group__']
-        needed_cols = [control_col, measurement_col, read_type]
-    else:
-        group = cast(group, to=list)
-        needed_cols = group + [control_col, measurement_col, read_type]
-    check_constant_within_groups(df, None if group_is_dummy else group, read_type, 'wavelength column')
+    group_cols = ['__group__'] if group is None else as_list(group)
+    check_constant_within_groups(df, group, read_type, 'wavelength column', allow=allow_mixed_wavelengths)
+    needed_cols = [control_col, measurement_col, read_type] + ([] if group is None else group_cols)
     df = df[list(dict.fromkeys(needed_cols))]
-    if group_is_dummy:
-        df = df.assign(**{group[0]: group[0]})
+    if group is None:
+        df = df.assign(**{group_cols[0]: group_cols[0]})
+    group = group_cols
 
-    z_data = df[list(dict.fromkeys(group + [read_type]))].drop_duplicates()
+    z_data = group_annotation(df, group, read_type)
 
     for q, name in zip((neg, pos), 
                        (neg_colname, pos_colname)):
@@ -122,8 +122,9 @@ def ssmd(
     control_col: str,
     pos: str,
     neg: str,
-    group: Optional[Union[str, Iterable[str]]] = None,
-    robust: bool = False
+    group: str | Iterable[str] | None = None,
+    robust: bool = False,
+    allow_mixed_wavelengths: bool = False
 ) -> DataFrame:
     
     r"""Calculate SSMD based on positive and negative controls, 
@@ -156,6 +157,9 @@ def ssmd(
         taken as one big group.
     robust : bool, optional
         Use median instead of mean (still uses variance). Default: False.
+    allow_mixed_wavelengths : bool, optional
+        Allow the wavelength to vary within a group (raises ValueError by default).
+        Wavelengths are then joined with "|" in the output. Default: False.
 
     Returns
     -------
@@ -177,6 +181,7 @@ def ssmd(
         group=group,
         vartype='var',
         robust=robust,
+        allow_mixed_wavelengths=allow_mixed_wavelengths,
     )
 
     ssmd_col = measurement_col + '_ssmd'
@@ -192,8 +197,9 @@ def z_prime_factor(data: DataFrame,
                    control_col: str,
                    pos: str,
                    neg: str,
-                   group: Optional[Union[str, Iterable[str]]] = None,
-                   robust: bool = False) -> DataFrame:
+                   group: str | Iterable[str] | None = None,
+                   robust: bool = False,
+                   allow_mixed_wavelengths: bool = False) -> DataFrame:
     
     r"""Calculate Z'-factor based on positive and negative controls, 
     optionally within groups.
@@ -226,6 +232,9 @@ def z_prime_factor(data: DataFrame,
     robust : bool, optional
         Use median and MAD instead of mean and standard deviation. 
         Default: False.
+    allow_mixed_wavelengths : bool, optional
+        Allow the wavelength to vary within a group (raises ValueError by default).
+        Wavelengths are then joined with "|" in the output. Default: False.
 
     Returns
     -------
@@ -245,6 +254,7 @@ def z_prime_factor(data: DataFrame,
         group=group,
         vartype='sd',
         robust=robust,
+        allow_mixed_wavelengths=allow_mixed_wavelengths,
     )
 
     zprime_col = measurement_col + '_zprime'

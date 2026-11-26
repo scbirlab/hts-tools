@@ -1,6 +1,6 @@
 # 🏮 hts-tools
 
-![GitHub Workflow Status (with branch)](https://img.shields.io/github/actions/workflow/status/scbirlab/hts-tools/python-publish.yml)
+![GitHub Workflow Status (with branch)](https://img.shields.io/github/actions/workflow/status/scbirlab/hts-tools/python-package.yml?branch=main)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hts-tools)
 ![PyPI](https://img.shields.io/pypi/v/hts-tools)
 
@@ -21,6 +21,8 @@ Parsing and analysing platereader absorbance and fluorescence data.
 - [Documentation](#documentation)
 
 ## Installation
+
+Requires Python 3.10 or newer.
 
 ### The easy way
 

@@ -1,14 +1,15 @@
 """Functions for normalizing data."""
 
-from typing import Iterable, List, Optional, Union
+from collections.abc import Iterable
 from functools import partial
 
-from carabiner import cast, print_err
 import pandas as pd
+from carabiner import print_err
 
-from .utils import check_constant_within_groups
+from .utils import as_list, check_constant_within_groups
 
-def _unique_entries_str(x: pd.DataFrame) -> str:
+
+def _unique_entries_str(x: pd.Series) -> str:
     return ','.join(sorted(map(str, x.unique())))
 
 
@@ -24,7 +25,7 @@ def _check_controls(
             raise ValueError(f"{value=} is not in data:\n\t" +
                             _unique_entries_str(data[control_col]))
         except TypeError:
-            raise TypeError(f"{control_col=} is not a str column.")
+            raise TypeError(f"{control_col=} is not a str column.") from None
 
     return None
 
@@ -34,16 +35,17 @@ def _get_grouped_control_means(
     measurement_col: str,
     control_col: str,
     neg: str,
-    pos: Optional[str] = None,
-    group: Optional[Union[str, Iterable[str]]] = None
-) -> pd.DataFrame:
+    pos: str | None = None,
+    group: str | Iterable[str] | None = None,
+) -> tuple[dict[str, str], pd.DataFrame]:
 
     group_is_dummy = group is None
-    if group_is_dummy:
-        group = ['__group__']
-        data = data.assign(**{group[0]: group[0]})
+    if group is None:
+        group_cols = ['__group__']
+        data = data.assign(**{group_cols[0]: group_cols[0]})
     else:
-        group = cast(group, to=list)
+        group_cols = as_list(group)
+    group = group_cols
     if measurement_col not in data:
         raise KeyError(
             f"{measurement_col=} is not in data:\n\t{','.join(data.columns.tolist())}"
@@ -101,7 +103,7 @@ def _get_grouped_control_means(
 def _normalize_pon(data: pd.DataFrame, 
                    measurement_col: str,
                    neg_mean: str,
-                   pos_mean: Union[str, None] = None,
+                   pos_mean: str | None = None,
                    flip: bool = False) -> pd.DataFrame:
 
     norm_colname = measurement_col + '_norm.pon'
@@ -141,9 +143,9 @@ def normalize(data: pd.DataFrame,
               measurement_col: str,
               control_col: str,
               neg: str,
-              method: Union[str, None] = None,
-              pos: Union[str, None] = None,
-              group: Union[str, List[str], None] = None,
+              method: str | None = None,
+              pos: str | None = None,
+              group: str | list[str] | None = None,
               flip: bool = False) -> pd.DataFrame:
     
     r"""Normalize a column based on controls, optionally within groups.
@@ -270,8 +272,8 @@ def normalize(data: pd.DataFrame,
     
     try:
         normalization_function = _NORMALIZATION_METHODS[method]
-    except KeyError as e:
-        raise AttributeError(f"Normalization method {method} is not supported.")
+    except KeyError:
+        raise AttributeError(f"Normalization method {method} is not supported.") from None
     
     if method == 'npg' and pos is None:
         raise AttributeError(f"Normalization method {method} requires positive controls.")

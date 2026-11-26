@@ -1,55 +1,98 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "hts-tools"
-version = "0.0.4.post2"
+version = "0.0.5"
 authors = [
-  { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
+  { name = "Eachan Johnson", email = "eachan.johnson@crick.ac.uk" },
 ]
 description = "Parsing and analysing platereader absorbance and fluorescence data."
 readme = "README.md"
-requires-python = ">=3.9"
-license = {file = "LICENSE"}
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["science", "assay", "platereader", "analysis"]
 
-classifiers = [  
-  
+classifiers = [
   "Development Status :: 3 - Alpha",
-
-  # Indicate who your project is intended for
   "Intended Audience :: Science/Research",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
-
-  "License :: OSI Approved :: MIT License",
-
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3 :: Only",
+  "Typing :: Typed",
 ]
 
-dependencies = [ 
-  "carabiner-tools[mpl,pd]>=0.0.3.post1",
-  "matplotlib", 
-  "numpy",
-  "openpyxl==3.1.0", 
-  "pandas",
-  "scipy"
+# carabiner-tools is depended on without its [mpl,pd] extras: those only add
+# pandas, matplotlib and an exact openpyxl==3.1.0 pin, which conflicts with
+# pandas>=3 (needs openpyxl>=3.1.5). The libraries are declared directly instead.
+dependencies = [
+  "carabiner-tools>=0.0.5.post3",
+  "matplotlib>=3.7",
+  "numpy>=1.24",
+  "openpyxl>=3.1.5",
+  "pandas>=2.2.2",
+  "scipy>=1.9",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+  "pytest-cov",
+]
+docs = [
+  "myst-parser",
+  "sphinx",
+  "sphinx-rtd-theme",
+]
+dev = [
+  "hts-tools[test,docs]",
+  "mypy",
+  "pandas-stubs",
+  "ruff",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/scbirlab/hts-tools"
 "Bug Tracker" = "https://github.com/scbirlab/hts-tools/issues"
+"Documentation" = "https://hts-tools.readthedocs.io"
 
-[project.scripts]  # Optional
+[project.scripts]
 hts = "htstools.cli:main"
 
-[tool.setuptools]
-# If there are data files included in your packages that need to be
-# installed, specify them here.
-# package-data = {"" = ["*.yml"]}
+[tool.setuptools.packages.find]
+include = ["htstools*"]
 
-[build-system]
-# These are the assumed default build requirements from pip:
-# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
-requires = ["setuptools>=43.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools.package-data]
+htstools = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["test", "htstools"]
+addopts = "--doctest-modules"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 127
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+# E/F: pycodestyle & pyflakes; UP: pyupgrade (modern typing syntax); B: bugbear; I: import order
+select = ["E", "F", "W", "UP", "B", "I"]
+ignore = [
+  "E501",  # long lines in docstrings and tables
+  "W291",  # trailing whitespace: tolerated in existing code
+  "W293",
+  "B905",  # zip() strict= is not needed everywhere
+]
+
+[tool.ruff.lint.per-file-ignores]
+"htstools/__init__.py" = ["F401"]  # re-exports
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true

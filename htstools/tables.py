@@ -1,23 +1,26 @@
 """Utilities for joining and pivoting tables."""
 
-from typing import Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from collections.abc import Callable, Iterable, Mapping
 from functools import reduce
+from typing import Literal
 
-from carabiner import cast, print_err
 import numpy as np
 import pandas as pd
+from carabiner import print_err
 from pandas import DataFrame
 
-from .utils import row_col_to_well
+from .utils import as_list, row_col_to_well
 
 _DUMMY_GROUP = "__group__"
+
+JoinType = Literal["inner", "outer", "left", "right"]
 
 def _join(
     left: DataFrame, 
     right: DataFrame,
-    how: str = 'inner',
-    sheet_name: Optional[str] = None
-) -> DataFrame:
+    how: JoinType = 'inner',
+    sheet_name: str | None = None
+) -> tuple[tuple[str, ...], DataFrame]:
     
     left_cols, right_cols = left.columns.tolist(), right.columns.tolist()
     shared_cols = tuple(c for c in left_cols if c in right_cols)  # keep column order stable
@@ -51,11 +54,17 @@ def _join(
     
 
 def _join_reduce(
-    how: str = 'inner'
-) -> Tuple[Tuple[str], DataFrame]:
+    how: JoinType = 'inner'
+) -> Callable[
+    [tuple[tuple[tuple[str, ...], ...], DataFrame], DataFrame], 
+    tuple[tuple[tuple[str, ...], ...], DataFrame]
+]:
     
-    def join_reduce(left, right):
-        prev_shared_cols, left = left
+    def join_reduce(
+        accumulated: tuple[tuple[tuple[str, ...], ...], DataFrame], 
+        right: DataFrame
+    ) -> tuple[tuple[tuple[str, ...], ...], DataFrame]:
+        prev_shared_cols, left = accumulated
         shared_cols, data = _join(left, right, how=how)
         return prev_shared_cols + (shared_cols, ), data
     
@@ -64,8 +73,9 @@ def _join_reduce(
 
 def join(
     left: DataFrame, 
-    right: Union[DataFrame, Dict[str, DataFrame]],
-    how: str = 'inner') -> DataFrame:
+    right: DataFrame | Mapping[str, DataFrame],
+    how: JoinType = 'inner'
+) -> tuple[tuple, DataFrame]:
     
     """Perform a database-stype join (merge) between two dataframes.
 
@@ -86,8 +96,9 @@ def join(
 
     Returns
     -------
-    Tuple[str, pandas.DataFrame]
-        Shared column headers and joined dataframe.
+    tuple
+        Shared column headers (a tuple of tuples if `right` is a dict of sheets) 
+        and the joined dataframe.
 
     Raises
     ------
@@ -133,10 +144,11 @@ def join(
     elif isinstance(right, Mapping):
         dict_values = list(right.values())
         if all(isinstance(value, DataFrame) for value in dict_values):
+            initial: tuple[tuple[tuple[str, ...], ...], DataFrame] = ((), left)
             return reduce(
                 _join_reduce(how=how), 
                 dict_values,
-                (tuple(), left),
+                initial,
             )
     raise NotImplementedError(f"Right table of type {type(right)} not supported.")
 
@@ -163,7 +175,7 @@ def _pivot_plate_df(
 
 
 def _pivot_plate_excel(
-    df: Dict[str, DataFrame],
+    df: Mapping[str, DataFrame],
     value_name: str
 ) -> DataFrame:
     
@@ -175,7 +187,7 @@ def _pivot_plate_excel(
 
 
 def pivot_plate(
-    df: Union[DataFrame, Mapping[str, DataFrame]],
+    df: DataFrame | Mapping[str, DataFrame],
     value_name: str = 'value'
 ) -> DataFrame:
     
@@ -266,7 +278,7 @@ _NA_PLACEHOLDER = '__NA__'
 
 def wide_replicates(
     data: DataFrame, 
-    index: Union[str, Iterable[str]], 
+    index: str | Iterable[str], 
     values: str
 ) -> DataFrame:
     """Pivot a table with a "replicate" column to one column per replicate ("rep_1", ...).
@@ -276,7 +288,7 @@ def wide_replicates(
     index should identify a measurement uniquely.
 
     """
-    index = cast(index, to=list)
+    index = as_list(index)
     for c in index:
         if (data[c] == _NA_PLACEHOLDER).any():
             raise ValueError(
@@ -288,15 +300,15 @@ def wide_replicates(
         **{c: data[c].astype(object).where(data[c].notna(), _NA_PLACEHOLDER) for c in index},
     )
     wide = pd.pivot_table(filled, index=index, columns='replicate', values=values).reset_index()
-    wide[index] = wide[index].replace(_NA_PLACEHOLDER, np.nan).infer_objects()
+    wide[index] = wide[index].where(wide[index] != _NA_PLACEHOLDER, np.nan).infer_objects()
     return wide.set_index(index)
 
 
 def replicate_table(
     data: DataFrame,
-    group: Optional[Union[str, Iterable[str]]] = None,
-    wide: Optional[str] = None,
-    seed: Optional[int] = 42
+    group: str | Iterable[str] | None = None,
+    wide: str | None = None,
+    seed: int | None = 42
 ) -> DataFrame:
     
     """Annotate a dataframe with replicates within a group.
@@ -366,7 +378,7 @@ def replicate_table(
     # keys are kept as their own group. This is vectorized and does not use
     # `groupby.apply`, which treats the grouping columns differently across 
     # pandas versions.
-    keys = [data[g].to_numpy() for g in cast(group, to=list)] if group is not None else [np.zeros(data.shape[0])]
+    keys = [data[g].to_numpy() for g in as_list(group)] if group is not None else [np.zeros(data.shape[0])]
     random_numbers = pd.Series(
         np.random.default_rng(seed).random(data.shape[0]), 
         index=data.index,
