@@ -14,10 +14,10 @@ def _check_controls(
     data: pd.DataFrame, 
     measurement_col: str,
     control_col: str,
-    value: str
+    value: Optional[str] = None
 ) -> None:
         
-    if value not in data[control_col].values:
+    if value is not None and value not in data[control_col].values:
         try:
             raise ValueError(f"{value=} is not in data:\n\t" +
                             _unique_entries_str(data[control_col]))
@@ -59,9 +59,7 @@ def _get_grouped_control_means(
         control_col=control_col,
     )
     control_checker(value=neg)
-    
-    if pos is not None:
-        control_checker(value=pos)
+    control_checker(value=pos)
 
     for control, value in control_values.items():
         name = mean_control_column_names[control]

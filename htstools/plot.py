@@ -7,10 +7,11 @@ from carabiner.mpl import add_legend, colorblind_palette, grid
 import pandas as pd
 from pandas import DataFrame
 import matplotlib.pyplot as plt
-from matplotlib import axes, figure
+from matplotlib import axes, colormaps, figure
 from matplotlib.container import ErrorbarContainer
 from matplotlib.collections import PathCollection
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, Normalize
+from matplotlib.cm import ScalarMappable
 import numpy as np
 from scipy import stats
 
@@ -19,7 +20,7 @@ PlotTuple = Tuple[axes.Axes, figure.Figure]
 _DARK_GREY = "dimgrey"
 _LIGHT_GREY = "lightgrey"
 _MARKER_SIZE = 3.
-_PANEL_SIZE = 2.5
+_PANEL_SIZE = 2.25
 
 def _plot_errbars(
     ax: axes.Axes,
@@ -33,14 +34,14 @@ def _plot_errbars(
     grouped = data.groupby([x])[[y]]
     
     this_mean = grouped.mean().reset_index()
-    this_sd = grouped.sem().reset_index()
+    this_se = grouped.sem().reset_index()
     ci = stats.norm.interval(ci)[-1]
 
-    y_is_all_nan = np.all(np.isnan(this_sd[y]))
+    y_is_all_nan = np.all(np.isnan(this_se[y]))
     errbar = ax.errorbar(
         this_mean[x], 
         this_mean[y], 
-        yerr=(this_sd[y] * ci) if not y_is_all_nan else 0., 
+        yerr=(this_se[y] * ci) if not y_is_all_nan else 0., 
         fmt='o-', 
         **kwargs
     )
@@ -95,9 +96,9 @@ def _plot_mean_and_scatter(
         x, 
         y, 
         color=color, 
-        s=s * 3., 
+        s=s * 2., 
         zorder=zorder,
-        label='_default'
+        label="_none",
     )
     return ax, scatter, errbars
     
@@ -117,7 +118,9 @@ def plot_dose_response(
     sharey: bool = False,
     sharex: bool = False,
     x_log: bool = False,
-    y_log: bool = False
+    y_log: bool = False,
+    color_log: bool = False, 
+    cmap: str = "cividis"
 ) -> List[str]:
 
     """Plot dose response curves, optionally splitting data across files, facets and colors.
@@ -156,6 +159,10 @@ def plot_dose_response(
         Whether to make x-axis log scale. Default: False.
     y_log : bool, optional
         Whether to make y-axis log scale. Default: False.
+    color_log: bool, optional
+        Whether to plot numeric colors on log scale. Default: False.
+    cmap: str, optional
+        Which matplotlib colormap to use. Default: "cividis".
 
     Returns
     -------
@@ -169,8 +176,13 @@ def plot_dose_response(
     
     DEFAULT = '__default__'
     filenames = []
-    capsize, markersize = 2., _MARKER_SIZE
     data[DEFAULT] = DEFAULT
+    plot_defaults = {
+        "x": x,
+        "y": y,
+        "capsize": 2.,
+        "s": _MARKER_SIZE,
+    }
 
     color = color or DEFAULT
     facet = facet or DEFAULT
@@ -184,66 +196,91 @@ def plot_dose_response(
     n_facet_rows = int(np.ceil(np.sqrt(n_facets)))
     n_facet_cols = int(np.ceil(n_facets / n_facet_rows))
 
+    colors_are_numeric = (color in data.select_dtypes(include=np.number))
+
     assert (n_facet_cols * n_facet_rows) >= n_facets, f"{n_facets} != {n_facet_rows} x {n_facet_cols}"
+
+    if colors_are_numeric:
+        _min, _max = data[color].min(), data[color].max()
+        if color_log and _min == 0.:
+            _min += 1
+        if _max == _min:
+            _max += 1
+        norm = (LogNorm if color_log else Normalize)(vmin=_min, vmax=_max)
+        scalar_mappable = ScalarMappable(norm=norm, cmap=cmap)
+        convert_to_color = lambda x: colormaps[cmap](norm(x))
+        color_args = {
+            color_name: {
+                "color": convert_to_color(color_name), 
+            } for color_name in sorted(data[color].unique())
+        }
+    else:
+        color_args = {
+            color_name: {
+                "color": f"C{i}" if color_name != DEFAULT else "C1",
+                "label": color_name if color_name != DEFAULT else "_none",
+            } for i, color_name in enumerate(sorted(data[color].unique()))
+        }
 
     for file_name, file_data in (
         data.sort_values(by=x).groupby(files)
     ):
         if files == DEFAULT:
-            filename = f'{file_prefix}.{format}'
-        else:
-            filename = f'{file_prefix}_{files}={file_name}.{format}'
+            filename = f'{file_prefix}.{format}' if files == DEFAULT else f'{file_prefix}_{files}={file_name}.{format}'
 
         fig, _ = grid(
             nrow=n_facet_rows, 
             ncol=n_facet_cols, 
-            aspect_ratio=1.1,
+            aspect_ratio=1.25,
             sharey=sharey,
             sharex=sharex,
         )
 
         for ax, (facet_name, facet_data) in zip(fig.axes, file_data.groupby(facet)):
+            if y_log:
+                facet_data = facet_data[facet_data[y] > 0.]
             ax.set(
                 title=facet_name if facet_name != DEFAULT else '',
                 xlabel=x, 
                 ylabel=y,
-                xscale='log' if x_log else "linear",
-                yscale='log' if y_log else "linear",
+                xscale="log" if x_log else "linear",
+                yscale="log" if y_log else "linear",
             )
 
             for i in hlines:
-                ax.axhline(i, c=_LIGHT_GREY, zorder=-5)
+                if y_log and i == 0:
+                    continue
+                else:
+                    ax.axhline(i, c=_LIGHT_GREY, zorder=-5)
+
+            if y_log and not sharey:
+                ax.set_ylim(.9 * facet_data[y].min(), 1.1 * facet_data[y].max())
 
             if (
                 color_control is not None and 
                 color_control in facet_data[color].values
-            ):
-                control_data = facet_data.query(f'{color} == "{color_control}"')
+            ):  
+                control_data = facet_data.query(f'{color} == @color_control')
                 _plot_mean_and_scatter(
                     ax, 
-                    control_data, 
-                    x, 
-                    y, 
+                    control_data,
                     color=_DARK_GREY,
-                    s=markersize, 
-                    capsize=capsize, 
                     zorder=5,
+                    **plot_defaults,
                 )
-
-            for i, (color_name, color_data) in enumerate(facet_data.groupby(color)):
+            for color_name, color_data in facet_data.groupby(color):
                 if color_name != color_control:
-                    _plot_mean_and_scatter(
+                    ax, sc, err = _plot_mean_and_scatter(
                         ax, 
-                        color_data, 
-                        x, 
-                        y, 
-                        color=f"C{i}" if color_name != DEFAULT else "C1",
-                        s=markersize, 
-                        capsize=capsize,
-                        label=color_name if color_name != DEFAULT else '',
+                        color_data,
+                        **color_args[color_name],
+                        **plot_defaults,
                     )
 
-        add_legend(ax)
+            if colors_are_numeric:
+                fig.colorbar(scalar_mappable, ax=ax)
+            elif len(color_args) > 1:
+                add_legend(ax)
         fig.savefig(
             filename, 
             dpi=300 if format.lower() == 'png' else 'figure',
@@ -257,7 +294,7 @@ def plot_mean_sd(
     data: DataFrame,
     x: Union[str, Iterable[str]], 
     y: str, 
-    panel_size: float = _PANEL_SIZE
+    panel_size: float = _PANEL_SIZE * 1.8
 ) -> PlotTuple:
 
     x = cast(x, to=list)
@@ -274,8 +311,8 @@ def plot_mean_sd(
     data_to_plot = data_to_plot.sort_values('grouping')
 
     fig, ax = grid(
-        panel_size=panel_size / .7, 
-        aspect_ratio=.7,
+        panel_size=panel_size, 
+        aspect_ratio=.8,
     )
     for m, s, label in zip((y_pos_mean, y_neg_mean), (y_pos_sd, y_neg_sd), ("Positive", "Negative")):
         y1 = data_to_plot[m] - data_to_plot[s]
@@ -433,7 +470,7 @@ def plot_histogram(
     x: str,
     control_col: str,
     negative: str,
-    positive: str,
+    positive: Optional[str] = None,
     panel_size: float = _PANEL_SIZE
 ) -> PlotTuple:
     
@@ -454,14 +491,19 @@ def plot_histogram(
         squeeze=False,
     )
 
+    if positive is not None:
+        plot_layers = (positive, negative, None)
+    else:
+        plot_layers = (negative, None)
+
     for row, (wv, wv_df) in zip(axes, data.groupby(read_type)):
-        for i, control in enumerate((positive, negative, None)):
+        for i, control in enumerate(plot_layers):
             if control is not None:
                 q = f'{control_col} == "{control}"'
                 axes = row[0], row[2]
                 title = 'Controls'
             else:
-                q = f'{control_col} not in ["{negative}", "{positive}"]'
+                q = f'{control_col} not in ["' + ", ".join(plot_layers[:-1]) + '"]'
                 axes = row[1], row[3]
                 title = 'Experiment'
             
@@ -508,7 +550,7 @@ def plot_replicates(
     grouping: Union[str, Iterable[str]],
     control_col: str,
     negative: str,
-    positive: str,
+    positive: Optional[str] = None,
     panel_size: float = _PANEL_SIZE
 ) -> PlotTuple:
 
@@ -522,6 +564,11 @@ def plot_replicates(
     do_log = True #n_gt_zero > .5
     n_cols = 2 if do_log else 1
     n_rows = n_read_types
+
+    if positive is not None:
+        plot_layers = (positive, negative, None)
+    else:
+        plot_layers = (negative, None)
     
     fig, axes = grid(
         nrow=n_rows, 
@@ -548,11 +595,11 @@ def plot_replicates(
         )[0, -1]
 
         for ax in row:
-            for i, control in enumerate((positive, negative, None)):
+            for i, control in enumerate(plot_layers):
                 if control is not None:
                     q = f'{control_col} == "{control}"'
                 else:
-                    q = f'{control_col} not in ["{negative}", "{positive}"]'
+                    q = f'{control_col} not in ["' + ", ".join(plot_layers[:-1]) + '"]'
                 this_data = df_wide.query(q)
                 ax.scatter(
                     'rep_1', 'rep_2', 
